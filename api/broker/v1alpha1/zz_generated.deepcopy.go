@@ -180,7 +180,9 @@ func (in RelatedResources) DeepCopyInto(out *RelatedResources) {
 	{
 		in := &in
 		*out = make(RelatedResources, len(*in))
-		copy(*out, *in)
+		for key, val := range *in {
+			(*out)[key] = val
+		}
 	}
 }
 

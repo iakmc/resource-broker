@@ -98,7 +98,9 @@ func (in *PGStatus) DeepCopyInto(out *PGStatus) {
 	if in.RelatedResources != nil {
 		in, out := &in.RelatedResources, &out.RelatedResources
 		*out = make(brokerv1alpha1.RelatedResources, len(*in))
-		copy(*out, *in)
+		for key, val := range *in {
+			(*out)[key] = val
+		}
 	}
 }
 
@@ -311,7 +313,9 @@ func (in *VMStatus) DeepCopyInto(out *VMStatus) {
 	if in.RelatedResources != nil {
 		in, out := &in.RelatedResources, &out.RelatedResources
 		*out = make(brokerv1alpha1.RelatedResources, len(*in))
-		copy(*out, *in)
+		for key, val := range *in {
+			(*out)[key] = val
+		}
 	}
 }
 

@@ -123,8 +123,7 @@ spec:
                 - type
                 x-kubernetes-list-type: map
               relatedResources:
-                description: RelatedResources lists resources related to this VM.
-                items:
+                additionalProperties:
                   description: |-
                     RelatedResource defines references to related resources.
                     It should be embedded in the status of resources that should be
@@ -154,7 +153,8 @@ spec:
                   - gvk
                   - name
                   type: object
-                type: array
+                description: RelatedResources lists resources related to this VM.
+                type: object
             type: object
         required:
         - spec
