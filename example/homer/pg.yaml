@@ -1,7 +1,7 @@
 apiVersion: example.platform-mesh.io/v1alpha1
-kind: VM
+kind: PG
 metadata:
-  name: vm-from-homer
+  name: pg-from-homer
 spec:
-  arch: x86_64
-  memory: 512
+  storage:
+    size: 1

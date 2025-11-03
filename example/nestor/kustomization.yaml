@@ -1,0 +1,9 @@
+resources:
+  # - ../../config/crd
+
+  # TODO copy from theseus, but should have its own method later
+  - ../../config/crd/bases/broker.platform-mesh.io_acceptapis.yaml
+  - https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.27/releases/cnpg-1.27.1.yaml
+  - rgd.yaml
+
+  - acceptapi.yaml
