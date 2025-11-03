@@ -284,7 +284,7 @@ func (gr *genericReconciler) Reconcile(ctx context.Context, req mcreconcile.Requ
 	// TODO handle resource drift when a related resource is removed in
 	// the provider it needs to be removed in the consumer
 	// maybe just a finalizer on the resources in the provider?
-	relatedResourcesI, found, err := unstructured.NestedSlice(providerObj.Object, "status", "relatedResources")
+	relatedResourcesI, found, err := unstructured.NestedMap(providerObj.Object, "status", "relatedResources")
 	if err != nil {
 		log.Error(err, "Failed to get related resources from synced resource status")
 		return mctrl.Result{}, err
@@ -294,8 +294,8 @@ func (gr *genericReconciler) Reconcile(ctx context.Context, req mcreconcile.Requ
 		return mctrl.Result{}, nil
 	}
 
-	relatedResources := make([]brokerv1alpha1.RelatedResource, 0, len(relatedResourcesI))
-	for _, rrI := range relatedResourcesI {
+	relatedResources := make(map[string]brokerv1alpha1.RelatedResource, len(relatedResourcesI))
+	for key, rrI := range relatedResourcesI {
 		rrMap, ok := rrI.(map[string]interface{})
 		if !ok {
 			return mctrl.Result{}, fmt.Errorf("failed to cast related resource from synced resource status")
@@ -306,12 +306,13 @@ func (gr *genericReconciler) Reconcile(ctx context.Context, req mcreconcile.Requ
 			return mctrl.Result{}, fmt.Errorf("failed to convert related resource from synced resource status: %w", err)
 		}
 
-		relatedResources = append(relatedResources, rr)
+		relatedResources[key] = rr
 	}
 
 	log.Info("Syncing related resources from provider to consumer", "count", len(relatedResources))
 
-	for _, relatedResource := range relatedResources {
+	for key, relatedResource := range relatedResources {
+		log := log.WithValues("relatedResourceKey", key)
 		log.Info("Syncing related resource", "relatedResource", relatedResource)
 		providerRRObj := &unstructured.Unstructured{}
 		providerRRObj.SetGroupVersionKind(relatedResource.SchemaGVK())

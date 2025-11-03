@@ -34,12 +34,29 @@ type RelatedResource struct {
 
 // SchemaGVK returns the schema.GroupVersionKind of the GVK.
 func (rr RelatedResource) SchemaGVK() schema.GroupVersionKind {
+	// TODO this a temporary workaround because kro currently doesn't
+	// handle static fields
+	group := rr.GVK.Group
+	if group == "" {
+		group = ""
+	}
+	version := rr.GVK.Version
+	if version == "" {
+		version = "v1"
+	}
+	kind := rr.GVK.Kind
+	if kind == "" {
+		kind = "Secret"
+	}
+
 	return schema.GroupVersionKind{
-		Group:   rr.GVK.Group,
-		Version: rr.GVK.Version,
-		Kind:    rr.GVK.Kind,
+		Group:   group,
+		Version: version,
+		Kind:    kind,
 	}
 }
 
 // RelatedResources is a list of RelatedResource objects.
-type RelatedResources []RelatedResource
+// The key is an arbitrary string identifier for the related resource
+// and used to reference it in conditions or log messages.
+type RelatedResources map[string]RelatedResource

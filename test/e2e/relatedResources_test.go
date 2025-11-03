@@ -167,7 +167,7 @@ func TestRelatedResources(t *testing.T) {
 
 	t.Log("Update RelatedResources in provider cluster")
 	vm.Status.RelatedResources = brokerv1alpha1.RelatedResources{
-		{
+		"configmap": brokerv1alpha1.RelatedResource{
 			Namespace: namespace,
 			Name:      cmName,
 			GVK: metav1.GroupVersionKind{
