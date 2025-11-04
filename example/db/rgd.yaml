@@ -74,6 +74,6 @@ spec:
           namespace: ${schema.metadata.namespace}
         type: Opaque
         stringData:
-          host: broker-nestor-control-plane
+          host: broker-db-control-plane
           # without the conversion the port is interpreted as value.valueUnstructured and errors
           port: ${string(service.spec.ports[0].nodePort)}

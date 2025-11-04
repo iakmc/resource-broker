@@ -14,10 +14,10 @@ spec:
       volumes:
         - name: pg-app
           secret:
-            secretName: pg-from-homer-app
+            secretName: pg-from-consumer-app
         - name: pg-host
           secret:
-            secretName: pg-from-homer-host
+            secretName: pg-from-consumer-host
       containers:
       - name: example-app
         image: broker-example-app:dev

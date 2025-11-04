@@ -1,9 +1,9 @@
 resources:
-  # - ../../config/crd
-
-  # TODO copy from theseus, but should have its own method later
+  # TODO the inhouse provider should only template to a simple
+  # deployment or something, not a full operator install
   - ../../config/crd/bases/broker.platform-mesh.io_acceptapis.yaml
   - https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.27/releases/cnpg-1.27.1.yaml
   - rgd.yaml
 
+  # The AcceptAPI for resource broker
   - acceptapi.yaml

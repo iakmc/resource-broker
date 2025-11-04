@@ -1,7 +1,7 @@
 apiVersion: example.platform-mesh.io/v1alpha1
 kind: PG
 metadata:
-  name: pg-from-homer
+  name: pg-from-consumer
 spec:
   storage:
     size: 1

@@ -74,6 +74,6 @@ spec:
           namespace: ${schema.metadata.namespace}
         type: Opaque
         stringData:
-          host: broker-theseus-control-plane
+          host: broker-cloud-control-plane
           # without the conversion the port is interpreted as value.valueUnstructured and errors
           port: ${string(service.spec.ports[0].nodePort)}
