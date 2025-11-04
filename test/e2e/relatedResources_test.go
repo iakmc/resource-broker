@@ -166,21 +166,38 @@ func TestRelatedResources(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Log("Update RelatedResources in provider cluster")
-	vm.Status.RelatedResources = brokerv1alpha1.RelatedResources{
-		"configmap": brokerv1alpha1.RelatedResource{
-			Namespace: namespace,
-			Name:      cmName,
-			GVK: metav1.GroupVersionKind{
-				Group:   "",
-				Version: "v1",
-				Kind:    "ConfigMap",
+	require.Eventually(t, func() bool {
+		vm := &examplev1alpha1.VM{}
+		err := providerCl.GetClient().Get(
+			t.Context(),
+			types.NamespacedName{
+				Name:      vmName,
+				Namespace: namespace,
 			},
-		},
-	}
-	require.NoError(t, providerCl.GetClient().Status().Update(
-		t.Context(),
-		vm,
-	))
+			vm,
+		)
+		if err != nil {
+			t.Logf("error getting VM from provider cluster: %v", err)
+			return false
+		}
+		vm.Status.RelatedResources = brokerv1alpha1.RelatedResources{
+			"configmap": brokerv1alpha1.RelatedResource{
+				Namespace: namespace,
+				Name:      cmName,
+				GVK: metav1.GroupVersionKind{
+					Group:   "",
+					Version: "v1",
+					Kind:    "ConfigMap",
+				},
+			},
+		}
+
+		err = providerCl.GetClient().Status().Update(
+			t.Context(),
+			vm,
+		)
+		return err == nil
+	}, wait.ForeverTestTimeout, time.Second)
 
 	t.Log("Wait for RelatedResource ConfigMap to appear in source cluster")
 	require.Eventually(t, func() bool {
