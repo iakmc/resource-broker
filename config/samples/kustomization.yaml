@@ -3,4 +3,5 @@ resources:
 - broker_v1alpha1_acceptapi.yaml
 - example_v1alpha1_vm.yaml
 - example_v1alpha1_rdbms.yaml
+- example_v1alpha1_pg.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples
