@@ -30,6 +30,9 @@ jobs:
       - name: Verify kind installation
         run: kind version
 
+      - name: Ensure TMPDIR exists
+        run: mkdir -p ${{ github.workspace }}/tmp
+
       - name: Running example
         run: ./example/run.bash
         env:

@@ -13,11 +13,11 @@ RUN --mount=type=cache,target=/go/pkg/mod/ \
     GOCACHE=/root/.cache/go-build \
     GOOS=$TARGETOS \
     GOARCH=$TARGETARCH \
-    make build
+    go build -o bin/example-app ./cmd/example-app
 
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
-COPY --from=builder /workspace/bin/manager .
+COPY --from=builder /workspace/bin/example-app .
 USER 65532:65532
 
-ENTRYPOINT ["/manager"]
+ENTRYPOINT ["/example-app"]

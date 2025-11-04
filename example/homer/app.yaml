@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: example-app
+spec:
+  selector:
+    matchLabels:
+      app: example-app
+  template:
+    metadata:
+      labels:
+        app: example-app
+    spec:
+      volumes:
+        - name: pg-app
+          secret:
+            secretName: pg-from-homer-app
+        - name: pg-host
+          secret:
+            secretName: pg-from-homer-host
+      containers:
+      - name: example-app
+        image: broker-example-app:dev
+        args:
+          - --db-host-file=/etc/pg-host/host
+          - --db-port-file=/etc/pg-host/port
+          - --db-user-file=/etc/pg-app/username
+          - --db-password-file=/etc/pg-app/password
+          - --db-name-file=/etc/pg-app/dbname
+        volumeMounts:
+          - name: pg-app
+            mountPath: /etc/pg-app
+            readOnly: true
+          - name: pg-host
+            mountPath: /etc/pg-host
+            readOnly: true
+

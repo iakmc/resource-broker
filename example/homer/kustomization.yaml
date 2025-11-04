@@ -1,0 +1,5 @@
+resources:
+  # The postgres order
+  - pg.yaml
+  # The app that will use postgres
+  - app.yaml

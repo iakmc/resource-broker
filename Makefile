@@ -117,6 +117,12 @@ build-installer: manifests generate kustomize ## Generate a consolidated YAML wi
 	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
 	$(KUSTOMIZE) build config/default > dist/install.yaml
 
+##@ Examples
+
+build-examples: build docker-build
+	go build -o bin/example-app ./cmd/example-app
+	docker build -t broker-example-app:dev -f ./cmd/example-app/Dockerfile .
+
 ##@ Deployment
 
 ifndef ignore-not-found

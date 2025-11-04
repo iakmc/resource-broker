@@ -1,0 +1,9 @@
+resources:
+  # Only installing the AcceptAPI CRD from the platform-mesh.io broker
+  - ../../config/crd/bases/broker.platform-mesh.io_acceptapis.yaml
+  # CloudNativePG operator to deploy postgresql clusters
+  - https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.27/releases/cnpg-1.27.1.yaml
+  # The AcceptAPI for resource broker
+  - acceptapi.yaml
+  # The RGD to map the accepted API to CloudNativePG and back
+  - rgd.yaml
