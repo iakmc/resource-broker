@@ -31,14 +31,9 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes/scheme"
 
-	"sigs.k8s.io/controller-runtime/pkg/cluster"
-
-	"sigs.k8s.io/multicluster-runtime/providers/single"
-
 	brokerv1alpha1 "github.com/platform-mesh/resource-broker/api/broker/v1alpha1"
 	examplev1alpha1 "github.com/platform-mesh/resource-broker/api/example/v1alpha1"
 	"github.com/platform-mesh/resource-broker/cmd/manager"
-	"github.com/platform-mesh/resource-broker/test/utils"
 )
 
 // TestRelatedResources tests that related resources are copied from
@@ -49,25 +44,10 @@ func TestRelatedResources(t *testing.T) {
 	// For the VM kind to be available
 	require.NoError(t, examplev1alpha1.AddToScheme(scheme.Scheme))
 
-	t.Log("Start a consumer and provider control plane")
-	_, consumerCfg := utils.DefaultEnvTest(t)
-	consumerCl, err := cluster.New(consumerCfg)
-	require.NoError(t, err)
-	go func() {
-		err := consumerCl.Start(t.Context())
-		require.NoError(t, err)
-	}()
-
-	_, providerCfg := utils.DefaultEnvTest(t)
-	providerCl, err := cluster.New(providerCfg)
-	require.NoError(t, err)
-	go func() {
-		err := providerCl.Start(t.Context())
-		require.NoError(t, err)
-	}()
+	frame := NewFrame(t)
 
 	t.Log("Create AcceptAPI in provider control plane")
-	err = providerCl.GetClient().Create(
+	err := frame.Provider.Cluster.GetClient().Create(
 		t.Context(),
 		&brokerv1alpha1.AcceptAPI{
 			ObjectMeta: metav1.ObjectMeta{
@@ -85,24 +65,16 @@ func TestRelatedResources(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	consumerCluster := single.New("consumer", consumerCl)
-	providerCluster := single.New("provider", providerCl)
-
-	mgr, err := manager.Setup(manager.Options{
-		Name:     t.Name(),
-		Local:    consumerCfg,
-		Compute:  consumerCfg,
-		Consumer: consumerCluster,
-		Provider: providerCluster,
-		GVKs: []schema.GroupVersionKind{
-			{
-				Group:   "example.platform-mesh.io",
-				Version: "v1alpha1",
-				Kind:    "VM",
-			},
+	mgrOptions := frame.Options(t)
+	mgrOptions.GVKs = []schema.GroupVersionKind{
+		{
+			Group:   "example.platform-mesh.io",
+			Version: "v1alpha1",
+			Kind:    "VM",
 		},
-		MgrOptions: ManagerOptions(),
-	})
+	}
+
+	mgr, err := manager.Setup(mgrOptions)
 	require.NoError(t, err)
 
 	go func() {
@@ -114,7 +86,7 @@ func TestRelatedResources(t *testing.T) {
 	vmName := "test-vm"
 
 	t.Log("Create VM in consumer cluster")
-	err = consumerCl.GetClient().Create(
+	err = frame.Consumer.Cluster.GetClient().Create(
 		t.Context(),
 		&examplev1alpha1.VM{
 			ObjectMeta: metav1.ObjectMeta{
@@ -132,7 +104,7 @@ func TestRelatedResources(t *testing.T) {
 	t.Log("Wait for VM to appear in provider cluster")
 	vm := &examplev1alpha1.VM{}
 	require.Eventually(t, func() bool {
-		err := providerCl.GetClient().Get(
+		err := frame.Provider.Cluster.GetClient().Get(
 			t.Context(),
 			types.NamespacedName{
 				Name:      vmName,
@@ -151,7 +123,7 @@ func TestRelatedResources(t *testing.T) {
 	cmName := "related-configmap"
 	cmKey := "related-key"
 	cmValue := "related-value"
-	err = providerCl.GetClient().Create(
+	err = frame.Provider.Cluster.GetClient().Create(
 		t.Context(),
 		&corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
@@ -168,7 +140,7 @@ func TestRelatedResources(t *testing.T) {
 	t.Log("Update RelatedResources in provider cluster")
 	require.Eventually(t, func() bool {
 		vm := &examplev1alpha1.VM{}
-		err := providerCl.GetClient().Get(
+		err := frame.Provider.Cluster.GetClient().Get(
 			t.Context(),
 			types.NamespacedName{
 				Name:      vmName,
@@ -192,7 +164,7 @@ func TestRelatedResources(t *testing.T) {
 			},
 		}
 
-		err = providerCl.GetClient().Status().Update(
+		err = frame.Provider.Cluster.GetClient().Status().Update(
 			t.Context(),
 			vm,
 		)
@@ -202,7 +174,7 @@ func TestRelatedResources(t *testing.T) {
 	t.Log("Wait for RelatedResource ConfigMap to appear in source cluster")
 	require.Eventually(t, func() bool {
 		cm := &corev1.ConfigMap{}
-		err := consumerCl.GetClient().Get(
+		err := frame.Consumer.Cluster.GetClient().Get(
 			t.Context(),
 			types.NamespacedName{
 				Name:      cmName,
