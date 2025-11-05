@@ -12,6 +12,7 @@ spec:
       storage:
         size: integer | required=true
     status:
+      status: ${cluster.status.conditions.exists(c, c.type == "Ready" && c.status == "True") ? "Available":"Unavailable"}
       conditions: ${cluster.status.conditions}
       relatedResources:
         secret:
