@@ -80,7 +80,7 @@ func TestManagerCopy(t *testing.T) {
 	namespace := "default"
 	cmName := "test-configmap"
 
-	t.Log("Create ConfigMap in source cluster")
+	t.Log("Create ConfigMap in consumer control plane")
 	err = frame.Consumer.Cluster.GetClient().Create(
 		t.Context(),
 		&corev1.ConfigMap{
@@ -95,7 +95,7 @@ func TestManagerCopy(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	t.Log("Wait for ConfigMap to appear in provider cluster")
+	t.Log("Wait for ConfigMap to appear in provider control plane")
 	require.Eventually(t, func() bool {
 		cm := &corev1.ConfigMap{}
 		err := frame.Provider.Cluster.GetClient().Get(
@@ -107,7 +107,7 @@ func TestManagerCopy(t *testing.T) {
 			cm,
 		)
 		if err != nil {
-			t.Logf("error getting configmap from provider cluster: %v", err)
+			t.Logf("error getting configmap from provider control plane: %v", err)
 			return false
 		}
 		return cm.Data["key"] == "value"
