@@ -40,32 +40,58 @@ spec:
             description: spec defines the desired state of Migration
             properties:
               from:
-                description: From indicates the source GVK of the resource to be migrated.
+                description: From indicates the source resource to be migrated.
                 properties:
-                  group:
+                  gvk:
+                    description: GVK is the GroupVersionKind of the resource.
+                    properties:
+                      group:
+                        type: string
+                      kind:
+                        type: string
+                      version:
+                        type: string
+                    required:
+                    - group
+                    - kind
+                    - version
+                    type: object
+                  name:
+                    description: Name is the name of the resource.
                     type: string
-                  kind:
-                    type: string
-                  version:
+                  namespace:
+                    description: Namespace is the namespace of the resource.
                     type: string
                 required:
-                - group
-                - kind
-                - version
+                - gvk
+                - name
                 type: object
               to:
-                description: To indicates the target GVK of the resource to be migrated.
+                description: To indicates the target resource to be migrated.
                 properties:
-                  group:
+                  gvk:
+                    description: GVK is the GroupVersionKind of the resource.
+                    properties:
+                      group:
+                        type: string
+                      kind:
+                        type: string
+                      version:
+                        type: string
+                    required:
+                    - group
+                    - kind
+                    - version
+                    type: object
+                  name:
+                    description: Name is the name of the resource.
                     type: string
-                  kind:
-                    type: string
-                  version:
+                  namespace:
+                    description: Namespace is the namespace of the resource.
                     type: string
                 required:
-                - group
-                - kind
-                - version
+                - gvk
+                - name
                 type: object
             required:
             - from
@@ -152,9 +178,6 @@ spec:
               state:
                 description: state represents the current state of the Migration process.
                 type: string
-            required:
-            - id
-            - stage
             type: object
         required:
         - spec

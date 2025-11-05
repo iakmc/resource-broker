@@ -18,7 +18,7 @@ spec:
     schema:
       openAPIV3Schema:
         description: MigrationConfiguration is the Schema for the migrationconfigurations
-          API
+          API.
         properties:
           apiVersion:
             description: |-

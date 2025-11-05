@@ -8,6 +8,7 @@ rules:
   - broker.platform-mesh.io
   resources:
   - acceptapis
+  - migrationconfigurations
   - migrations
   verbs:
   - create
@@ -21,6 +22,7 @@ rules:
   - broker.platform-mesh.io
   resources:
   - acceptapis/finalizers
+  - migrationconfigurations/finalizers
   - migrations/finalizers
   verbs:
   - update
@@ -28,6 +30,7 @@ rules:
   - broker.platform-mesh.io
   resources:
   - acceptapis/status
+  - migrationconfigurations/status
   - migrations/status
   verbs:
   - get
