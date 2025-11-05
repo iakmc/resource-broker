@@ -7,6 +7,7 @@ resources:
 - bases/example.platform-mesh.io_rdbmss.yaml
 - bases/example.platform-mesh.io_pgs.yaml
 - bases/broker.platform-mesh.io_migrationconfigurations.yaml
+- bases/broker.platform-mesh.io_migrations.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:
