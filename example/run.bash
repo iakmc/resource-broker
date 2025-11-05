@@ -176,11 +176,11 @@ kubectl --kubeconfig "$consumers/consumer.kubeconfig" patch pgs pg-from-consumer
 # data was migrated deleted from db. But as the initial poc
 # deleting and then creating is fine.
 
-log "Wait for PG to vanish from db"
-kubectl --kubeconfig "$providers/db.kubeconfig" wait --for=delete pgs/pg-from-consumer || die "PG did not get deleted from db"
-
 log "Wait for PG to appear in cloud"
 kubectl --kubeconfig "$providers/cloud.kubeconfig" wait --for=create pgs/pg-from-consumer || die "PG did not become ready in cloud"
+
+log "Wait for PG to vanish from db"
+kubectl --kubeconfig "$providers/db.kubeconfig" wait --for=delete pgs/pg-from-consumer || die "PG did not get deleted from db"
 
 log "Wait for application to notice the change"
 retry_count=0
