@@ -33,6 +33,10 @@ type PGSpec struct {
 
 // PGStatus defines the observed state of PG.
 type PGStatus struct {
+	// status represents the overall status of the PG resource.
+	// +optional
+	Status brokerv1alpha1.Status `json:"status,omitempty"`
+
 	// conditions represent the current state of the PG resource.
 	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
 	//
