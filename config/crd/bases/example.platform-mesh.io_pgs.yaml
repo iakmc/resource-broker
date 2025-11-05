@@ -157,6 +157,9 @@ spec:
                   type: object
                 description: RelatedResources lists resources related to this VM.
                 type: object
+              status:
+                description: status represents the overall status of the PG resource.
+                type: string
             type: object
         required:
         - spec
