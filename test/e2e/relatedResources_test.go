@@ -85,7 +85,7 @@ func TestRelatedResources(t *testing.T) {
 	namespace := "default"
 	vmName := "test-vm"
 
-	t.Log("Create VM in consumer cluster")
+	t.Log("Create VM in consumer control plane")
 	err = frame.Consumer.Cluster.GetClient().Create(
 		t.Context(),
 		&examplev1alpha1.VM{
@@ -101,7 +101,7 @@ func TestRelatedResources(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	t.Log("Wait for VM to appear in provider cluster")
+	t.Log("Wait for VM to appear in provider control plane")
 	vm := &examplev1alpha1.VM{}
 	require.Eventually(t, func() bool {
 		err := frame.Provider.Cluster.GetClient().Get(
@@ -113,13 +113,13 @@ func TestRelatedResources(t *testing.T) {
 			vm,
 		)
 		if err != nil {
-			t.Logf("error getting VM from provider cluster: %v", err)
+			t.Logf("error getting VM from provider control plane: %v", err)
 			return false
 		}
 		return vm.Name == vmName
 	}, wait.ForeverTestTimeout, time.Second)
 
-	t.Log("Create related ConfigMap in provider cluster")
+	t.Log("Create related ConfigMap in provider control plane")
 	cmName := "related-configmap"
 	cmKey := "related-key"
 	cmValue := "related-value"
@@ -137,7 +137,7 @@ func TestRelatedResources(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	t.Log("Update RelatedResources in provider cluster")
+	t.Log("Update RelatedResources in provider control plane")
 	require.Eventually(t, func() bool {
 		vm := &examplev1alpha1.VM{}
 		err := frame.Provider.Cluster.GetClient().Get(
@@ -149,7 +149,7 @@ func TestRelatedResources(t *testing.T) {
 			vm,
 		)
 		if err != nil {
-			t.Logf("error getting VM from provider cluster: %v", err)
+			t.Logf("error getting VM from provider control plane: %v", err)
 			return false
 		}
 		vm.Status.RelatedResources = brokerv1alpha1.RelatedResources{
@@ -171,7 +171,7 @@ func TestRelatedResources(t *testing.T) {
 		return err == nil
 	}, wait.ForeverTestTimeout, time.Second)
 
-	t.Log("Wait for RelatedResource ConfigMap to appear in source cluster")
+	t.Log("Wait for RelatedResource ConfigMap to appear in source control plane")
 	require.Eventually(t, func() bool {
 		cm := &corev1.ConfigMap{}
 		err := frame.Consumer.Cluster.GetClient().Get(
@@ -183,7 +183,7 @@ func TestRelatedResources(t *testing.T) {
 			cm,
 		)
 		if err != nil {
-			t.Logf("error getting related configmap from source cluster: %v", err)
+			t.Logf("error getting related configmap from source control plane: %v", err)
 			return false
 		}
 		return cm.Data[cmKey] == cmValue
