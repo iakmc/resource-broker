@@ -41,9 +41,11 @@ func TestRelatedResources(t *testing.T) {
 	t.Parallel()
 
 	frame := NewFrame(t)
+	consumer := frame.NewConsumer(t, "consumer")
+	provider := frame.NewProvider(t, "provider")
 
 	t.Log("Create AcceptAPI in provider control plane")
-	err := frame.Provider.Cluster.GetClient().Create(
+	err := provider.Cluster.GetClient().Create(
 		t.Context(),
 		&brokerv1alpha1.AcceptAPI{
 			ObjectMeta: metav1.ObjectMeta{
@@ -82,7 +84,7 @@ func TestRelatedResources(t *testing.T) {
 	vmName := "test-vm"
 
 	t.Log("Create VM in consumer control plane")
-	err = frame.Consumer.Cluster.GetClient().Create(
+	err = consumer.Cluster.GetClient().Create(
 		t.Context(),
 		&examplev1alpha1.VM{
 			ObjectMeta: metav1.ObjectMeta{
@@ -100,7 +102,7 @@ func TestRelatedResources(t *testing.T) {
 	t.Log("Wait for VM to appear in provider control plane")
 	vm := &examplev1alpha1.VM{}
 	require.Eventually(t, func() bool {
-		err := frame.Provider.Cluster.GetClient().Get(
+		err := provider.Cluster.GetClient().Get(
 			t.Context(),
 			types.NamespacedName{
 				Name:      vmName,
@@ -119,7 +121,7 @@ func TestRelatedResources(t *testing.T) {
 	cmName := "related-configmap"
 	cmKey := "related-key"
 	cmValue := "related-value"
-	err = frame.Provider.Cluster.GetClient().Create(
+	err = provider.Cluster.GetClient().Create(
 		t.Context(),
 		&corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
@@ -136,7 +138,7 @@ func TestRelatedResources(t *testing.T) {
 	t.Log("Update RelatedResources in provider control plane")
 	require.Eventually(t, func() bool {
 		vm := &examplev1alpha1.VM{}
-		err := frame.Provider.Cluster.GetClient().Get(
+		err := provider.Cluster.GetClient().Get(
 			t.Context(),
 			types.NamespacedName{
 				Name:      vmName,
@@ -160,7 +162,7 @@ func TestRelatedResources(t *testing.T) {
 			},
 		}
 
-		err = frame.Provider.Cluster.GetClient().Status().Update(
+		err = provider.Cluster.GetClient().Status().Update(
 			t.Context(),
 			vm,
 		)
@@ -170,7 +172,7 @@ func TestRelatedResources(t *testing.T) {
 	t.Log("Wait for RelatedResource ConfigMap to appear in source control plane")
 	require.Eventually(t, func() bool {
 		cm := &corev1.ConfigMap{}
-		err := frame.Consumer.Cluster.GetClient().Get(
+		err := consumer.Cluster.GetClient().Get(
 			t.Context(),
 			types.NamespacedName{
 				Name:      cmName,
