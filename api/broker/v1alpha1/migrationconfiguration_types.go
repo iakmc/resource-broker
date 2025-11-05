@@ -1,51 +1,57 @@
+/*
+Copyright 2025.
+SPDX-License-Identifier: Apache-2.0
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
-// MigrationConfigurationSpec defines the desired state of MigrationConfiguration
+// MigrationConfigurationSpec defines the desired state of MigrationConfiguration.
 type MigrationConfigurationSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
+	// From indicates the source GVK of the resource to be migrated.
+	// +required
+	From metav1.GroupVersionKind `json:"from"`
+	// To indicates the target GVK of the resource to be migrated.
+	// +required
+	To metav1.GroupVersionKind `json:"to"`
 
-	// foo is an example field of MigrationConfiguration. Edit migrationconfiguration_types.go to remove/update
+	// Stages defines the ordered list of migration stages to be
+	// applied.
 	// +optional
-	Foo *string `json:"foo,omitempty"`
+	Stages []MigrationStage `json:"stages,omitempty"`
 }
 
-// MigrationConfigurationStatus defines the observed state of MigrationConfiguration.
-type MigrationConfigurationStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+// MigrationStage defines a single stage in a migration process.
+type MigrationStage struct {
+	// ID is a unique identifier for the migration stage.
+	// +required
+	ID string `json:"id"`
 
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
-
-	// conditions represent the current state of the MigrationConfiguration resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
-	// +listType=map
-	// +listMapKey=type
+	// Templates is a list of raw Kubernetes resource templates of
+	// resources to be deployed as part of this migration stage.
 	// +optional
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	Templates []runtime.RawExtension `json:"templates,omitempty"`
 }
 
 // +kubebuilder:object:root=true
-// +kubebuilder:subresource:status
 
-// MigrationConfiguration is the Schema for the migrationconfigurations API
+// MigrationConfiguration is the Schema for the migrationconfigurations API.
 type MigrationConfiguration struct {
 	metav1.TypeMeta `json:",inline"`
 
@@ -56,15 +62,11 @@ type MigrationConfiguration struct {
 	// spec defines the desired state of MigrationConfiguration
 	// +required
 	Spec MigrationConfigurationSpec `json:"spec"`
-
-	// status defines the observed state of MigrationConfiguration
-	// +optional
-	Status MigrationConfigurationStatus `json:"status,omitempty,omitzero"`
 }
 
 // +kubebuilder:object:root=true
 
-// MigrationConfigurationList contains a list of MigrationConfiguration
+// MigrationConfigurationList contains a list of MigrationConfiguration.
 type MigrationConfigurationList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`

@@ -6,4 +6,49 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: migrationconfiguration-sample
 spec:
-  # TODO(user): Add fields here
+  from:
+    - group: rdbms.generic.platform-mesh.io
+      version: v1alpha1
+      kind: Postgres
+  to:
+    - group: rdbms.generic.platform-mesh.io
+      version: v1alpha1
+      kind: Postgres
+  stages:
+    - id: initial-migration
+      templates:
+        - apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: initial-postgres-migrate-${ id } # or something, some internal identifier
+          template:
+            spec:
+              restartPolicy: Never
+              containers:
+                - name: migrate
+                  image: postgres:16
+                  env:
+                    # Since the platform owner the generic API
+                    # they can also decide the layout of the related
+                    # resource like secrets
+                    # That in turn allows making automatic migrations like
+                    # this as both source and destination secrets
+                    # are known from the generic API.
+                    - name: SRC_PGHOST
+                      valueFrom:
+                        secretKeyRef:
+                          name: ${ source.secret }
+                          key: host
+                    # ...
+                    - name: DST_PGHOST
+                      valueFrom:
+                        secretKeyRef:
+                          name: ${ destination.secret }
+                          key: host
+                    # ...
+                  command: ["/bin/sh", "-c"]
+                  args:
+                    - |
+                      set -e
+                      pg_dump -h $SRC_PGHOST -p $SRC_PGPORT -U $SRC_PGUSER $SRC_PGDATABASE \
+                          | psql -h $DST_PGHOST -p $DST_PGPORT -U $DST_PGUSER $DST_PGDATABASE

@@ -1,31 +1,54 @@
+/*
+Copyright 2025.
+SPDX-License-Identifier: Apache-2.0
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
-// MigrationSpec defines the desired state of Migration
+// MigrationSpec defines the desired state of Migration.
 type MigrationSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
+	// From indicates the source resource to be migrated.
+	// +required
+	From MigrationRef `json:"from"`
+	// To indicates the target resource to be migrated.
+	// +required
+	To MigrationRef `json:"to"`
+}
 
-	// foo is an example field of Migration. Edit migration_types.go to remove/update
+// MigrationRef references a specific resource involved in the
+// migration.
+type MigrationRef struct {
+	// GVK is the GroupVersionKind of the resource.
+	// +required
+	GVK metav1.GroupVersionKind `json:"gvk"`
+	// Name is the name of the resource.
+	// +required
+	Name string `json:"name"`
+	// Namespace is the namespace of the resource.
 	// +optional
-	Foo *string `json:"foo,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
 }
 
 // MigrationStatus defines the observed state of Migration.
 type MigrationStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
+	// state represents the current state of the Migration process.
+	State MigrationState `json:"state,omitempty"`
 
 	// conditions represent the current state of the Migration resource.
 	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
@@ -38,14 +61,33 @@ type MigrationStatus struct {
 	// The status of each condition is one of True, False, or Unknown.
 	// +listType=map
 	// +listMapKey=type
-	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// ID is a unique identifier for the migration stage.
+	ID string `json:"id,omitempty"`
+
+	// stage is a descriptive name for the migration stage.
+	Stage string `json:"stage,omitempty"`
 }
+
+// MigrationState represents the state of a Migration process.
+type MigrationState string
+
+const (
+	// MigrationStatePending indicates that the migration is pending and has not yet started.
+	MigrationStatePending MigrationState = "Pending"
+	// MigrationStateInProgress indicates that the migration is currently in progress.
+	MigrationStateInProgress MigrationState = "InProgress"
+	// MigrationStateCompleted indicates that the migration has been completed successfully.
+	MigrationStateCompleted MigrationState = "Completed"
+	// MigrationStateFailed indicates that the migration has failed.
+	MigrationStateFailed MigrationState = "Failed"
+)
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 
-// Migration is the Schema for the migrations API
+// Migration is the Schema for the migrations API.
 type Migration struct {
 	metav1.TypeMeta `json:",inline"`
 
@@ -64,7 +106,7 @@ type Migration struct {
 
 // +kubebuilder:object:root=true
 
-// MigrationList contains a list of Migration
+// MigrationList contains a list of Migration.
 type MigrationList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`

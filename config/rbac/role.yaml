@@ -8,6 +8,7 @@ rules:
   - broker.platform-mesh.io
   resources:
   - acceptapis
+  - migrations
   verbs:
   - create
   - delete
@@ -20,12 +21,14 @@ rules:
   - broker.platform-mesh.io
   resources:
   - acceptapis/finalizers
+  - migrations/finalizers
   verbs:
   - update
 - apiGroups:
   - broker.platform-mesh.io
   resources:
   - acceptapis/status
+  - migrations/status
   verbs:
   - get
   - patch

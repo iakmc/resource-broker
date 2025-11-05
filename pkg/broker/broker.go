@@ -53,6 +53,11 @@ type Broker struct {
 	// a given API.
 	// GVR -> clusterName -> acceptAPI.Name -> AcceptAPI
 	apiAccepters map[metav1.GroupVersionResource]map[string]map[string]*brokerv1alpha1.AcceptAPI
+
+	// migrationConfigurations maps source GVKs to target GVKs to
+	// MigrationConfigurations.
+	// fromGVK -> toGVK -> MigrationConfiguration
+	migrationConfigurations map[metav1.GroupVersionKind]map[metav1.GroupVersionKind]brokerv1alpha1.MigrationConfiguration
 }
 
 // NewBroker creates a new broker that acts on the given manager.
@@ -66,9 +71,18 @@ func NewBroker(
 	b.mgr = mgr
 	b.coordination = coordination
 	b.compute = compute
-	b.apiAccepters = make(map[metav1.GroupVersionResource]map[string]map[string]*brokerv1alpha1.AcceptAPI)
 
+	b.apiAccepters = make(map[metav1.GroupVersionResource]map[string]map[string]*brokerv1alpha1.AcceptAPI)
 	if err := b.acceptAPIReconciler(name, mgr); err != nil {
+		return nil, err
+	}
+
+	b.migrationConfigurations = make(map[metav1.GroupVersionKind]map[metav1.GroupVersionKind]brokerv1alpha1.MigrationConfiguration)
+	if err := b.migrationConfigurationReconciler(name, mgr); err != nil {
+		return nil, err
+	}
+
+	if err := b.migrationReconciler(name, mgr); err != nil {
 		return nil, err
 	}
 
