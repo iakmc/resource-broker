@@ -30,13 +30,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 
-	"sigs.k8s.io/controller-runtime/pkg/cluster"
-
-	"sigs.k8s.io/multicluster-runtime/providers/single"
-
 	brokerv1alpha1 "github.com/platform-mesh/resource-broker/api/broker/v1alpha1"
 	"github.com/platform-mesh/resource-broker/cmd/manager"
-	"github.com/platform-mesh/resource-broker/test/utils"
 )
 
 // TestManagerCopy only tests that the manager can copy from a source to
@@ -44,25 +39,10 @@ import (
 func TestManagerCopy(t *testing.T) {
 	t.Parallel()
 
-	t.Log("Start a consumer and provider control plane")
-	_, consumerCfg := utils.DefaultEnvTest(t)
-	consumerCl, err := cluster.New(consumerCfg)
-	require.NoError(t, err)
-	go func() {
-		err := consumerCl.Start(t.Context())
-		require.NoError(t, err)
-	}()
-
-	_, providerCfg := utils.DefaultEnvTest(t)
-	providerCl, err := cluster.New(providerCfg)
-	require.NoError(t, err)
-	go func() {
-		err := providerCl.Start(t.Context())
-		require.NoError(t, err)
-	}()
+	frame := NewFrame(t)
 
 	t.Log("Create AcceptAPI in provider control plane")
-	err = providerCl.GetClient().Create(
+	err := frame.Provider.Cluster.GetClient().Create(
 		t.Context(),
 		&brokerv1alpha1.AcceptAPI{
 			ObjectMeta: metav1.ObjectMeta{
@@ -80,24 +60,16 @@ func TestManagerCopy(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	consumerCluster := single.New("consumer", consumerCl)
-	providerCluster := single.New("provider", providerCl)
-
-	mgr, err := manager.Setup(manager.Options{
-		Name:     t.Name(),
-		Local:    consumerCfg,
-		Compute:  consumerCfg,
-		Consumer: consumerCluster,
-		Provider: providerCluster,
-		GVKs: []schema.GroupVersionKind{
-			{
-				Group:   "",
-				Version: "v1",
-				Kind:    "ConfigMap",
-			},
+	mgrOptions := frame.Options(t)
+	mgrOptions.GVKs = []schema.GroupVersionKind{
+		{
+			Group:   "",
+			Version: "v1",
+			Kind:    "ConfigMap",
 		},
-		MgrOptions: ManagerOptions(),
-	})
+	}
+
+	mgr, err := manager.Setup(mgrOptions)
 	require.NoError(t, err)
 
 	go func() {
@@ -109,7 +81,7 @@ func TestManagerCopy(t *testing.T) {
 	cmName := "test-configmap"
 
 	t.Log("Create ConfigMap in source cluster")
-	err = consumerCl.GetClient().Create(
+	err = frame.Consumer.Cluster.GetClient().Create(
 		t.Context(),
 		&corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
@@ -126,7 +98,7 @@ func TestManagerCopy(t *testing.T) {
 	t.Log("Wait for ConfigMap to appear in provider cluster")
 	require.Eventually(t, func() bool {
 		cm := &corev1.ConfigMap{}
-		err := providerCl.GetClient().Get(
+		err := frame.Provider.Cluster.GetClient().Get(
 			t.Context(),
 			types.NamespacedName{
 				Name:      cmName,
