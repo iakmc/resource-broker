@@ -184,6 +184,20 @@ func (gr *genericReconciler) Reconcile(ctx context.Context, req mcreconcile.Requ
 		return mctrl.Result{}, err
 	}
 
+	status, found, err := ev.getProviderStatus(ctx)
+	if err != nil {
+		return mctrl.Result{}, err
+	}
+	if found {
+		switch status {
+		case brokerv1alpha1.StatusEmpty, brokerv1alpha1.StatusUnknown, brokerv1alpha1.StatusProvisioning:
+			ev.log.Info("Synced resource status is Empty, Unknown or Provisioning, not syncing related resources")
+			return mctrl.Result{}, nil
+		default:
+			ev.log.Info("Synced resource status is not Unknown or Provisioning, syncing related resources", "status", status)
+		}
+	}
+
 	if err := ev.syncRelatedResources(ctx); err != nil {
 		return mctrl.Result{}, err
 	}
@@ -465,6 +479,16 @@ func (ev *genericReconcilerEvent) syncResource(ctx context.Context) error {
 	}
 
 	return ev.decorateInProvider(ctx)
+}
+
+func (ev *genericReconcilerEvent) getProviderStatus(ctx context.Context) (brokerv1alpha1.Status, bool, error) {
+	providerObj, err := ev.getProviderObj(ctx)
+	if err != nil {
+		return brokerv1alpha1.StatusUnknown, false, fmt.Errorf("failed to get resource from provider cluster %q: %w", ev.providerName, err)
+	}
+
+	statusI, found, err := unstructured.NestedString(providerObj.Object, "status", "status")
+	return brokerv1alpha1.Status(statusI), found, err
 }
 
 func (ev *genericReconcilerEvent) syncRelatedResources(ctx context.Context) error {
