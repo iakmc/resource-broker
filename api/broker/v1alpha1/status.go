@@ -23,6 +23,9 @@ const (
 	// yet.
 	StatusUnknown Status = "Unknown"
 
+	// StatusEmpty indicates that the resource has no status.
+	StatusEmpty Status = ""
+
 	// StatusProvisioning indicates that the resource is being
 	// provisioned by a provider.
 	StatusProvisioning Status = "Provisioning"
