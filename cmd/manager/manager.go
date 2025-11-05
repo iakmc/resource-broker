@@ -26,6 +26,8 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	mctrl "sigs.k8s.io/multicluster-runtime"
 	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 	"sigs.k8s.io/multicluster-runtime/providers/multi"
@@ -46,10 +48,26 @@ type Options struct {
 	// Name is a workaround because SkipNameValidation does not seem to work
 	Name string
 
-	Local              *rest.Config
-	Compute            *rest.Config
+	// Local is the config for the local cluster where the manager will
+	// run.
+	Local *rest.Config
+
+	// Compute is a client for the compute cluster. The compute cluster
+	// is where the actual resources required for platform operations
+	// are created.
+	Compute client.Client
+
+	// Coordination is a provider for the coordination cluster. The
+	// coordination cluster is where the e.g. brokerv1alpha1.Migration
+	// resources are stored.
+	Coordination multicluster.Provider
+
+	// Consumer and Provider are the multicluster providers for the
+	// consumer and provider clusters, respectively.
 	Consumer, Provider multicluster.Provider
-	GVKs               []schema.GroupVersionKind
+
+	// GVKs are the GVKs to broker.
+	GVKs []schema.GroupVersionKind
 }
 
 // Setup sets up the manager and the broker.
@@ -66,6 +84,9 @@ func Setup(opts Options) (mctrl.Manager, error) {
 	if err := providers.AddProvider(broker.ProviderPrefix, opts.Provider); err != nil {
 		return nil, fmt.Errorf("unable to add provider provider: %w", err)
 	}
+	if err := providers.AddProvider(broker.CoordinationPrefix, opts.Coordination); err != nil {
+		return nil, fmt.Errorf("unable to add coordination provider: %w", err)
+	}
 
 	mgr, err := mctrl.NewManager(opts.Local, providers, opts.MgrOptions)
 	if err != nil {
@@ -75,6 +96,7 @@ func Setup(opts Options) (mctrl.Manager, error) {
 	if _, err := broker.NewBroker(
 		opts.Name,
 		mgr,
+		opts.Compute,
 		opts.GVKs...,
 	); err != nil {
 		return nil, fmt.Errorf("unable to set up broker with manager: %w", err)

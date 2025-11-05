@@ -24,6 +24,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	mctrl "sigs.k8s.io/multicluster-runtime"
 
 	brokerv1alpha1 "github.com/platform-mesh/resource-broker/api/broker/v1alpha1"
@@ -34,12 +36,16 @@ const (
 	ConsumerPrefix = "consumer"
 	// ProviderPrefix is the prefix expected for provider clusters.
 	ProviderPrefix = "provider"
+	// CoordinationPrefix is the prefix expected for coordination
+	// clusters.
+	CoordinationPrefix = "coordination"
 )
 
 // Broker brokers API resources to clusters that have accepted given
 // APIs.
 type Broker struct {
-	mgr mctrl.Manager
+	mgr     mctrl.Manager
+	compute client.Client
 
 	lock sync.RWMutex
 
@@ -53,10 +59,12 @@ type Broker struct {
 func NewBroker(
 	name string,
 	mgr mctrl.Manager,
+	compute client.Client,
 	gvks ...schema.GroupVersionKind,
 ) (*Broker, error) {
 	b := new(Broker)
 	b.mgr = mgr
+	b.compute = compute
 	b.apiAccepters = make(map[metav1.GroupVersionResource]map[string]map[string]*brokerv1alpha1.AcceptAPI)
 
 	if err := b.acceptAPIReconciler(name, mgr); err != nil {
