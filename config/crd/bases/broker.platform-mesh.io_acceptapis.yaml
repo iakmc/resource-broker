@@ -45,8 +45,8 @@ spec:
                   description: Filter defines a filter to select resources.
                   properties:
                     boundary:
-                      description: Boundary defines a min and max boundary for numeric
-                        filtering.
+                      description: Boundary defines min and/or max boundaries for
+                        numeric filtering.
                       properties:
                         max:
                           type: integer
@@ -54,9 +54,14 @@ spec:
                           type: integer
                       type: object
                     key:
+                      description: Key is the spec key to filter on.
                       minLength: 1
                       type: string
+                      x-kubernetes-validations:
+                      - message: Key must not start with 'spec.' as it is implied
+                        rule: '!self.startsWith(''spec.'')'
                     valueIn:
+                      description: ValueIn is the list of allowed values for the key.
                       items:
                         type: string
                       type: array
