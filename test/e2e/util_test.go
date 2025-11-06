@@ -24,6 +24,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
 
@@ -38,12 +40,14 @@ import (
 	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 	"sigs.k8s.io/multicluster-runtime/providers/single"
 
+	examplev1alpha1 "github.com/platform-mesh/resource-broker/api/example/v1alpha1"
 	"github.com/platform-mesh/resource-broker/cmd/manager"
 	"github.com/platform-mesh/resource-broker/test/utils"
 )
 
 func init() {
 	log.SetLogger(zap.New(zap.UseDevMode(true)))
+	runtime.Must(examplev1alpha1.AddToScheme(scheme.Scheme))
 }
 
 // ManagerOptions returns the default manager options for tests.

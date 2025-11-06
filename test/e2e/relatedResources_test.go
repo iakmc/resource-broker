@@ -29,7 +29,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/kubernetes/scheme"
 
 	brokerv1alpha1 "github.com/platform-mesh/resource-broker/api/broker/v1alpha1"
 	examplev1alpha1 "github.com/platform-mesh/resource-broker/api/example/v1alpha1"
@@ -40,9 +39,6 @@ import (
 // target to source cluster.
 func TestRelatedResources(t *testing.T) {
 	t.Parallel()
-
-	// For the VM kind to be available
-	require.NoError(t, examplev1alpha1.AddToScheme(scheme.Scheme))
 
 	frame := NewFrame(t)
 
