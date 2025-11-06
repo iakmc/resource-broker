@@ -25,12 +25,9 @@ import (
 	"strings"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/clientcmd"
 
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -39,7 +36,6 @@ import (
 
 	mctrl "sigs.k8s.io/multicluster-runtime"
 	"sigs.k8s.io/multicluster-runtime/providers/file"
-	"sigs.k8s.io/multicluster-runtime/providers/single"
 
 	"github.com/platform-mesh/resource-broker/cmd/manager"
 
@@ -205,14 +201,6 @@ func main() {
 		}
 	}
 
-	computeClient, err := client.New(computeConfig, client.Options{
-		Scheme: scheme.Scheme,
-	})
-	if err != nil {
-		setupLog.Error(err, "unable to create compute client")
-		os.Exit(1)
-	}
-
 	coordinationConfig := local
 	if *fCoordinationKubeconfig != "" {
 		rawCoordinationConfig, err := clientcmd.LoadFromFile(*fCoordinationKubeconfig)
@@ -232,18 +220,6 @@ func main() {
 			os.Exit(1)
 		}
 	}
-
-	coordinationCluster, err := cluster.New(
-		coordinationConfig,
-		func(o *cluster.Options) {
-			o.Scheme = scheme.Scheme
-		},
-	)
-	if err != nil {
-		setupLog.Error(err, "unable to create coordination cluster")
-		os.Exit(1)
-	}
-	coordination := single.New("coord", coordinationCluster)
 
 	consumer, err := file.New(file.Options{
 		KubeconfigDirs: strings.Split(*fConsumerKubeconfig, ","),
@@ -281,11 +257,11 @@ func main() {
 			// after the manager stops then its usage might be unsafe.
 			// LeaderElectionReleaseOnCancel: true,
 		},
-		Local:        local,
-		Compute:      computeClient,
-		Coordination: coordination,
-		Consumer:     consumer,
-		Provider:     provider,
+		Local:              local,
+		ComputeConfig:      computeConfig,
+		CoordinationConfig: coordinationConfig,
+		Consumer:           consumer,
+		Provider:           provider,
 		GVKs: []schema.GroupVersionKind{
 			{
 				Group:   *fGroup,

@@ -44,8 +44,8 @@ const (
 // Broker brokers API resources to clusters that have accepted given
 // APIs.
 type Broker struct {
-	mgr     mctrl.Manager
-	compute client.Client
+	mgr                   mctrl.Manager
+	coordination, compute client.Client
 
 	lock sync.RWMutex
 
@@ -59,11 +59,12 @@ type Broker struct {
 func NewBroker(
 	name string,
 	mgr mctrl.Manager,
-	compute client.Client,
+	coordination, compute client.Client,
 	gvks ...schema.GroupVersionKind,
 ) (*Broker, error) {
 	b := new(Broker)
 	b.mgr = mgr
+	b.coordination = coordination
 	b.compute = compute
 	b.apiAccepters = make(map[metav1.GroupVersionResource]map[string]map[string]*brokerv1alpha1.AcceptAPI)
 
