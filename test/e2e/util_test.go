@@ -38,6 +38,7 @@ import (
 
 	mctrl "sigs.k8s.io/multicluster-runtime"
 	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
+	"sigs.k8s.io/multicluster-runtime/providers/multi"
 	"sigs.k8s.io/multicluster-runtime/providers/single"
 
 	examplev1alpha1 "github.com/platform-mesh/resource-broker/api/example/v1alpha1"
@@ -66,8 +67,10 @@ func ManagerOptions() mctrl.Options {
 type Frame struct {
 	Coordination *ControlPlane
 	Compute      *ControlPlane
-	Consumer     *ControlPlane
-	Provider     *ControlPlane
+	Consumers    map[string]*ControlPlane
+	cProvider    *multi.Provider
+	Providers    map[string]*ControlPlane
+	pProvider    *multi.Provider
 }
 
 func NewFrame(tb testing.TB) *Frame {
@@ -76,9 +79,32 @@ func NewFrame(tb testing.TB) *Frame {
 	f := new(Frame)
 	f.Coordination = startControlPlane(tb)
 	f.Compute = startControlPlane(tb)
-	f.Consumer = startControlPlane(tb)
-	f.Provider = startControlPlane(tb)
+
+	f.Consumers = make(map[string]*ControlPlane)
+	f.cProvider = multi.New(multi.Options{})
+
+	f.Providers = make(map[string]*ControlPlane)
+	f.pProvider = multi.New(multi.Options{})
+
 	return f
+}
+
+func (f *Frame) NewConsumer(tb testing.TB, name string) *ControlPlane {
+	tb.Helper()
+	require.NotContains(tb, f.Consumers, name, "consumer already exists")
+	cp := startControlPlane(tb)
+	f.Consumers[name] = cp
+	require.NoError(tb, f.cProvider.AddProvider(name, cp.Provider()))
+	return cp
+}
+
+func (f *Frame) NewProvider(tb testing.TB, name string) *ControlPlane {
+	tb.Helper()
+	require.NotContains(tb, f.Providers, name, "provider already exists")
+	cp := startControlPlane(tb)
+	f.Providers[name] = cp
+	require.NoError(tb, f.pProvider.AddProvider(name, cp.Provider()))
+	return cp
 }
 
 func (f *Frame) Options(tb testing.TB) manager.Options {
@@ -87,8 +113,8 @@ func (f *Frame) Options(tb testing.TB) manager.Options {
 		Local:              f.Coordination.Config,
 		ComputeConfig:      f.Compute.Config,
 		CoordinationConfig: f.Coordination.Config,
-		Consumer:           f.Consumer.Provider(),
-		Provider:           f.Provider.Provider(),
+		Consumer:           f.cProvider,
+		Provider:           f.pProvider,
 		MgrOptions:         ManagerOptions(),
 	}
 }

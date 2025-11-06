@@ -40,9 +40,11 @@ func TestManagerCopy(t *testing.T) {
 	t.Parallel()
 
 	frame := NewFrame(t)
+	provider := frame.NewProvider(t, "provider")
+	consumer := frame.NewConsumer(t, "consumer")
 
 	t.Log("Create AcceptAPI in provider control plane")
-	err := frame.Provider.Cluster.GetClient().Create(
+	err := provider.Cluster.GetClient().Create(
 		t.Context(),
 		&brokerv1alpha1.AcceptAPI{
 			ObjectMeta: metav1.ObjectMeta{
@@ -81,7 +83,7 @@ func TestManagerCopy(t *testing.T) {
 	cmName := "test-configmap"
 
 	t.Log("Create ConfigMap in consumer control plane")
-	err = frame.Consumer.Cluster.GetClient().Create(
+	err = consumer.Cluster.GetClient().Create(
 		t.Context(),
 		&corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
@@ -98,7 +100,7 @@ func TestManagerCopy(t *testing.T) {
 	t.Log("Wait for ConfigMap to appear in provider control plane")
 	require.Eventually(t, func() bool {
 		cm := &corev1.ConfigMap{}
-		err := frame.Provider.Cluster.GetClient().Get(
+		err := provider.Cluster.GetClient().Get(
 			t.Context(),
 			types.NamespacedName{
 				Name:      cmName,
