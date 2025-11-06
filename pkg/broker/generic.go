@@ -47,10 +47,23 @@ import (
 
 func (b *Broker) genericReconciler(name string, mgr mctrl.Manager, gvk schema.GroupVersionKind) error {
 	gr := genericReconciler{
-		log:        ctrllog.Log.WithName("generic-reconciler").WithValues("gvk", gvk),
-		gvk:        gvk,
-		getCluster: b.mgr.GetCluster,
-		getAcceptedAPIs: func(providerName string, gvr metav1.GroupVersionResource) ([]*brokerv1alpha1.AcceptAPI, error) {
+		log:          ctrllog.Log.WithName("generic-reconciler").WithValues("gvk", gvk),
+		gvk:          gvk,
+		coordination: b.coordination,
+		compute:      b.compute,
+		getCluster:   b.mgr.GetCluster,
+		getProviders: func(gvr metav1.GroupVersionResource) map[string]map[string]*brokerv1alpha1.AcceptAPI {
+			b.lock.RLock()
+			defer b.lock.RUnlock()
+			ret := make(map[string]map[string]*brokerv1alpha1.AcceptAPI, len(b.apiAccepters[gvr]))
+			for provider, acceptors := range b.apiAccepters[gvr] {
+				cloned := make(map[string]*brokerv1alpha1.AcceptAPI, len(acceptors))
+				maps.Copy(cloned, acceptors)
+				ret[provider] = cloned
+			}
+			return ret
+		},
+		getProviderAcceptedAPIs: func(providerName string, gvr metav1.GroupVersionResource) ([]*brokerv1alpha1.AcceptAPI, error) {
 			b.lock.RLock()
 			defer b.lock.RUnlock()
 			acceptAPIs, ok := b.apiAccepters[gvr][providerName]
@@ -59,24 +72,15 @@ func (b *Broker) genericReconciler(name string, mgr mctrl.Manager, gvk schema.Gr
 			}
 			return slices.Collect(maps.Values(acceptAPIs)), nil
 		},
-		getPossibleProvider: func(gvr metav1.GroupVersionResource, obj *unstructured.Unstructured) (string, error) {
+		getMigrationConfiguration: func(fromGVK metav1.GroupVersionKind, toGVK metav1.GroupVersionKind) (brokerv1alpha1.MigrationConfiguration, bool) {
 			b.lock.RLock()
 			defer b.lock.RUnlock()
-			possibleProviders, ok := b.apiAccepters[gvr]
-
-			if !ok || len(possibleProviders) == 0 {
-				return "", fmt.Errorf("no clusters accept GVR %v", gvr)
+			toMap, ok := b.migrationConfigurations[fromGVK]
+			if !ok {
+				return brokerv1alpha1.MigrationConfiguration{}, false
 			}
-
-			for possibleProvider, acceptedAPIs := range possibleProviders {
-				for _, acceptAPI := range acceptedAPIs {
-					if applies, _ := acceptAPI.AppliesTo(gvr, obj); applies {
-						return possibleProvider, nil
-					}
-				}
-			}
-
-			return "", fmt.Errorf("no accepting cluster found for GVR %v", gvr)
+			v, ok := toMap[toGVK]
+			return v, ok
 		},
 	}
 	obj := &unstructured.Unstructured{}
@@ -88,18 +92,22 @@ func (b *Broker) genericReconciler(name string, mgr mctrl.Manager, gvk schema.Gr
 }
 
 const (
-	genericFinalizer   = "broker.platform-mesh.io/generic-finalizer"
-	consumerClusterAnn = "broker.platform-mesh.io/consumer-cluster"
-	providerClusterAnn = "broker.platform-mesh.io/provider-cluster"
+	genericFinalizer      = "broker.platform-mesh.io/generic-finalizer"
+	consumerClusterAnn    = "broker.platform-mesh.io/consumer-cluster"
+	providerClusterAnn    = "broker.platform-mesh.io/provider-cluster"
+	newProviderClusterAnn = "broker.platform-mesh.io/new-provider-cluster"
 )
 
 type genericReconciler struct {
 	log logr.Logger
 	gvk schema.GroupVersionKind
 
-	getCluster          func(context.Context, string) (cluster.Cluster, error)
-	getPossibleProvider func(metav1.GroupVersionResource, *unstructured.Unstructured) (string, error)
-	getAcceptedAPIs     func(string, metav1.GroupVersionResource) ([]*brokerv1alpha1.AcceptAPI, error)
+	coordination, compute client.Client
+
+	getCluster                func(context.Context, string) (cluster.Cluster, error)
+	getProviders              func(metav1.GroupVersionResource) map[string]map[string]*brokerv1alpha1.AcceptAPI
+	getProviderAcceptedAPIs   func(string, metav1.GroupVersionResource) ([]*brokerv1alpha1.AcceptAPI, error)
+	getMigrationConfiguration func(metav1.GroupVersionKind, metav1.GroupVersionKind) (brokerv1alpha1.MigrationConfiguration, bool)
 }
 
 // TODO this needs some more refactoring. not a fan of the
@@ -108,12 +116,15 @@ type genericReconciler struct {
 
 func (gr *genericReconciler) Reconcile(ctx context.Context, req mcreconcile.Request) (mctrl.Result, error) {
 	ev := genericReconcilerEvent{
-		log:                 ctrllog.FromContext(ctx).WithValues("clusterName", req.ClusterName),
-		gvk:                 gr.gvk,
-		req:                 req,
-		getCluster:          gr.getCluster,
-		getPossibleProvider: gr.getPossibleProvider,
-		getAcceptedAPIs:     gr.getAcceptedAPIs,
+		log:                       ctrllog.FromContext(ctx).WithValues("clusterName", req.ClusterName),
+		gvk:                       gr.gvk,
+		req:                       req,
+		coordination:              gr.coordination,
+		compute:                   gr.compute,
+		getCluster:                gr.getCluster,
+		getProviders:              gr.getProviders,
+		getProviderAcceptedAPIs:   gr.getProviderAcceptedAPIs,
+		getMigrationConfiguration: gr.getMigrationConfiguration,
 	}
 
 	ev.log.Info("Reconciling generic resource")
@@ -157,30 +168,47 @@ func (gr *genericReconciler) Reconcile(ctx context.Context, req mcreconcile.Requ
 	}
 
 	if !providerAccepts {
-		// TODO
+		ev.log.Info("Provider no longer accepts resource")
 
-		// choose new provider
-
-		// create in new provider
-
-		// delete from old provider when new ready
-
-		// update annotations
-
-		// OLD:
-
-		if err := ev.deleteObj(ctx, ev.providerCluster); err != nil {
-			return mctrl.Result{}, fmt.Errorf("failed to delete resource from provider cluster %q: %w", ev.providerName, err)
+		if err := ev.newProvider(ctx, consumerObj); err != nil {
+			return mctrl.Result{}, err
 		}
-		ev.providerName = ""
+
+		status, found, err := ev.getNewProviderStatus(ctx)
+		if err != nil {
+			return mctrl.Result{}, err
+		}
+		if found && !status.Continue() {
+			return mctrl.Result{}, nil
+		}
+
+		cont, err := ev.migrate(ctx, consumerObj)
+		if err != nil {
+			return mctrl.Result{}, err
+		}
+		if !cont {
+			return mctrl.Result{}, nil
+		}
+
+		ev.log.Info("Migration finished, syncing related resources from new provider")
+		if err := ev.syncRelatedResources(ctx, ev.newProviderName, ev.newProviderCluster); err != nil {
+			return mctrl.Result{}, err
+		}
+
+		ev.log.Info("Synced related resources from new provider, deleting from old provider")
+		if err := ev.deleteObj(ctx, ev.providerCluster); err != nil {
+			return mctrl.Result{}, fmt.Errorf("failed to delete resource from old provider cluster %q: %w", ev.providerName, err)
+		}
+
+		ev.providerName = ev.newProviderName
+		ev.providerCluster = ev.newProviderCluster
+		ev.newProviderName = ""
+		ev.newProviderCluster = nil
+
 		return mctrl.Result{Requeue: true}, ev.decorateInConsumer(ctx)
 	}
 
-	if err := ev.decorateInProvider(ctx); err != nil {
-		return mctrl.Result{}, err
-	}
-
-	if err := ev.syncResource(ctx); err != nil {
+	if err := ev.syncResource(ctx, ev.providerCluster); err != nil {
 		return mctrl.Result{}, err
 	}
 
@@ -188,17 +216,11 @@ func (gr *genericReconciler) Reconcile(ctx context.Context, req mcreconcile.Requ
 	if err != nil {
 		return mctrl.Result{}, err
 	}
-	if found {
-		switch status {
-		case brokerv1alpha1.StatusEmpty, brokerv1alpha1.StatusUnknown, brokerv1alpha1.StatusProvisioning:
-			ev.log.Info("Synced resource status is Empty, Unknown or Provisioning, not syncing related resources")
-			return mctrl.Result{}, nil
-		default:
-			ev.log.Info("Synced resource status is not Unknown or Provisioning, syncing related resources", "status", status)
-		}
+	if found && !status.Continue() {
+		return mctrl.Result{}, nil
 	}
 
-	if err := ev.syncRelatedResources(ctx); err != nil {
+	if err := ev.syncRelatedResources(ctx, ev.providerName, ev.providerCluster); err != nil {
 		return mctrl.Result{}, err
 	}
 
@@ -210,25 +232,61 @@ type genericReconcilerEvent struct {
 	gvk schema.GroupVersionKind
 	req mcreconcile.Request
 
-	getCluster          func(context.Context, string) (cluster.Cluster, error)
-	getPossibleProvider func(metav1.GroupVersionResource, *unstructured.Unstructured) (string, error)
-	getAcceptedAPIs     func(string, metav1.GroupVersionResource) ([]*brokerv1alpha1.AcceptAPI, error)
+	coordination, compute client.Client
 
-	consumerName    string
-	consumerCluster cluster.Cluster
-	providerName    string
-	providerCluster cluster.Cluster
+	getCluster                func(context.Context, string) (cluster.Cluster, error)
+	getProviders              func(metav1.GroupVersionResource) map[string]map[string]*brokerv1alpha1.AcceptAPI
+	getProviderAcceptedAPIs   func(string, metav1.GroupVersionResource) ([]*brokerv1alpha1.AcceptAPI, error)
+	getMigrationConfiguration func(metav1.GroupVersionKind, metav1.GroupVersionKind) (brokerv1alpha1.MigrationConfiguration, bool)
+
+	consumerName       string
+	consumerCluster    cluster.Cluster
+	providerName       string
+	providerCluster    cluster.Cluster
+	newProviderName    string
+	newProviderCluster cluster.Cluster
 
 	gvr metav1.GroupVersionResource
+}
+
+func (ev *genericReconcilerEvent) getPossibleProvider(obj *unstructured.Unstructured) (string, error) {
+	possibleProviders := ev.getProviders(ev.gvr)
+	if len(possibleProviders) == 0 {
+		return "", fmt.Errorf("no clusters accept GVR %v", ev.gvr)
+	}
+
+	for possibleProvider, acceptedAPIs := range possibleProviders {
+		for _, acceptAPI := range acceptedAPIs {
+			applies, reasons := acceptAPI.AppliesTo(ev.gvr, obj)
+			if applies {
+				return possibleProvider, nil
+			}
+			ev.log.Info("Provider does not accept resource due to filter mismatch", "provider", possibleProvider, "reasons", reasons)
+		}
+	}
+
+	return "", fmt.Errorf("no accepting cluster found for GVR %v", ev.gvr)
 }
 
 func (ev *genericReconcilerEvent) getProviderName(obj *unstructured.Unstructured) (string, error) {
 	providerName, ok := obj.GetAnnotations()[providerClusterAnn]
 	if ok && providerName != "" {
+		ev.log.Info("Found provider cluster annotation", "provider", providerName)
 		return providerName, nil
 	}
 
-	return ev.getPossibleProvider(ev.gvr, obj)
+	ev.log.Info("Found no provider in annotations, looking for possible providers")
+	return ev.getPossibleProvider(obj)
+}
+
+func (ev *genericReconcilerEvent) getNewProviderName(obj *unstructured.Unstructured) (string, error) {
+	providerName, ok := obj.GetAnnotations()[newProviderClusterAnn]
+	if ok && providerName != "" {
+		ev.log.Info("Found new provider cluster annotation", "newProvider", providerName)
+		return providerName, nil
+	}
+
+	return ev.getPossibleProvider(obj)
 }
 
 func (ev *genericReconcilerEvent) determineClusters(ctx context.Context) (bool, error) {
@@ -252,6 +310,12 @@ func (ev *genericReconcilerEvent) determineClusters(ctx context.Context) (bool, 
 		if err := ev.setConsumerClusterFromProvider(ctx); err != nil {
 			return false, err
 		}
+		// If consumer cluster is still nil the request cannot be
+		// served. Cause might be that the same resource exists in
+		// a provider cluster but doesn't originate from the broker.
+		if ev.consumerCluster == nil {
+			return false, nil
+		}
 	}
 
 	// GVR must be set here because it is needed to find possible
@@ -269,10 +333,42 @@ func (ev *genericReconcilerEvent) determineClusters(ctx context.Context) (bool, 
 		}
 	}
 
+	// Do a sanity check so an event from the new provider cluster does
+	// not start overwriting things from the new provider cluster before
+	// the migration is done.
+	consumerObj, err := ev.getConsumerObj(ctx)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			// Consumer object not found, nothing to do
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to get resource from consumer cluster %q: %w", ev.consumerName, err)
+	}
+
+	var ok bool
+	ev.newProviderName, ok = consumerObj.GetAnnotations()[newProviderClusterAnn]
+	if !ok {
+		// No new provider annotation, continue
+		return true, nil
+	}
+
+	if ev.newProviderName != ev.req.ClusterName {
+		// Event does not come from new provider cluster, continue
+		return true, nil
+	}
+
+	// Event comes from new provider cluster, correct the provider name
+	// and cluster on the event
+	ev.newProviderCluster = ev.providerCluster
+	if err := ev.setProviderCluster(ctx, consumerObj.GetAnnotations()[providerClusterAnn]); err != nil {
+		return false, err
+	}
+
 	return true, nil
 }
 
 func (ev *genericReconcilerEvent) setConsumerCluster(ctx context.Context, name string) error {
+	ev.log.Info("Setting consumer cluster", "consumer", name)
 	ev.consumerName = name
 	cl, err := ev.getCluster(ctx, ev.consumerName)
 	if err != nil {
@@ -299,10 +395,12 @@ func (ev *genericReconcilerEvent) setConsumerClusterFromProvider(ctx context.Con
 		return nil
 	}
 
+	ev.log.Info("Found consumer cluster annotation in provider", "consumer", consumerNameAnn)
 	return ev.setConsumerCluster(ctx, consumerNameAnn)
 }
 
 func (ev *genericReconcilerEvent) setProviderCluster(ctx context.Context, name string) error {
+	ev.log.Info("Setting provider cluster", "provider", name)
 	ev.providerName = name
 	cl, err := ev.getCluster(ctx, ev.providerName)
 	if err != nil {
@@ -331,6 +429,7 @@ func (ev *genericReconcilerEvent) setProviderClusterFromConsumer(ctx context.Con
 		return fmt.Errorf("no present or possible provider cluster found %q: %w", ev.consumerName, err)
 	}
 
+	ev.log.Info("Determined provider cluster from consumer", "provider", possibleProviderName)
 	return ev.setProviderCluster(ctx, possibleProviderName)
 }
 
@@ -369,6 +468,15 @@ func (ev *genericReconcilerEvent) getProviderObj(ctx context.Context) (*unstruct
 		return nil, err
 	}
 	return providerObj, nil
+}
+
+func (ev *genericReconcilerEvent) getNewProviderObj(ctx context.Context) (*unstructured.Unstructured, error) {
+	newProviderObj := &unstructured.Unstructured{}
+	newProviderObj.SetGroupVersionKind(ev.gvk)
+	if err := ev.newProviderCluster.GetClient().Get(ctx, ev.req.NamespacedName, newProviderObj); err != nil {
+		return nil, err
+	}
+	return newProviderObj, nil
 }
 
 func (ev *genericReconcilerEvent) deleteObjs(ctx context.Context) error {
@@ -422,26 +530,157 @@ func (ev *genericReconcilerEvent) decorateInConsumer(ctx context.Context) error 
 		}
 	}
 
-	return setAnnotation(ctx, ev.consumerCluster, consumerObj, providerClusterAnn, ev.providerName)
+	anns := consumerObj.GetAnnotations()
+	if anns == nil {
+		anns = make(map[string]string)
+	}
+
+	if ev.providerName != "" {
+		anns[providerClusterAnn] = ev.providerName
+	} else {
+		delete(anns, providerClusterAnn)
+	}
+
+	if ev.newProviderName != "" {
+		anns[newProviderClusterAnn] = ev.newProviderName
+	} else {
+		delete(anns, newProviderClusterAnn)
+	}
+
+	consumerObj.SetAnnotations(anns)
+	if err := ev.consumerCluster.GetClient().Update(ctx, consumerObj); err != nil {
+		return fmt.Errorf("failed to set annotations in consumer: %w", err)
+	}
+
+	return nil
 }
 
-func (ev *genericReconcilerEvent) decorateInProvider(ctx context.Context) error {
-	providerObj, err := ev.getProviderObj(ctx)
+func (ev *genericReconcilerEvent) newProvider(ctx context.Context, consumerObj *unstructured.Unstructured) error {
+	var err error
+	ev.newProviderName, err = ev.getNewProviderName(consumerObj)
 	if err != nil {
-		if apierrors.IsNotFound(err) {
-			// Object does not exist in provider yet
-			return nil
+		return fmt.Errorf("failed to determine new provider cluster: %w", err)
+	}
+	if ev.newProviderName == "" {
+		return fmt.Errorf("no new provider cluster annotation found, cannot migrate")
+	}
+
+	ev.log.Info("Determined new provider cluster", "newProvider", ev.newProviderName)
+
+	ev.newProviderCluster, err = ev.getCluster(ctx, ev.newProviderName)
+	if err != nil {
+		return fmt.Errorf("failed to get new provider cluster %q: %w", ev.newProviderName, err)
+	}
+
+	if err := setAnnotation(ctx, ev.consumerCluster, consumerObj, newProviderClusterAnn, ev.newProviderName); err != nil {
+		return fmt.Errorf("failed to set new provider cluster annotation in consumer: %w", err)
+	}
+
+	if err := ev.syncResource(ctx, ev.newProviderCluster); err != nil {
+		return fmt.Errorf("failed to sync resource to new provider cluster %q: %w", ev.newProviderName, err)
+	}
+
+	return nil
+}
+
+// migrate handles migration of the resource from one provider to
+// another.
+// It returns true if the caller can continue execution.
+func (ev *genericReconcilerEvent) migrate(ctx context.Context, consumerObj *unstructured.Unstructured) (bool, error) {
+	from := metav1.GroupVersionKind{
+		Group:   ev.gvk.Group,
+		Version: ev.gvk.Version,
+		Kind:    ev.gvk.Kind,
+	}
+	to := metav1.GroupVersionKind{
+		Group:   ev.gvk.Group,
+		Version: ev.gvk.Version,
+		Kind:    ev.gvk.Kind,
+	}
+	migrationConfig, found := ev.getMigrationConfiguration(from, to)
+	if !found {
+		ev.log.Info("No migration configuration found, continuing", "from", from, "to", to)
+		return true, nil
+	}
+
+	migration := &brokerv1alpha1.Migration{}
+	err := ev.coordination.Get(
+		ctx,
+		types.NamespacedName{
+			Name:      consumerObj.GetName(),
+			Namespace: consumerObj.GetNamespace(),
+		},
+		migration,
+	)
+	if err != nil && !apierrors.IsNotFound(err) {
+		ev.log.Error(err, "Failed to get Migration resource")
+		return false, fmt.Errorf("failed to get Migration resource: %w", err)
+	}
+	if err == nil {
+		ev.log.Info("Found existing Migration")
+
+		// TODO temporary, remove when migration reconciler is
+		// implemented
+		func() {
+			migration.Status.State = brokerv1alpha1.MigrationStateCompleted
+			if err := ev.coordination.Status().Update(ctx, migration); err != nil {
+				ev.log.Error(err, "Failed to update Migration resource status after creation")
+				return
+			}
+		}()
+
+		if migration.Status.State == brokerv1alpha1.MigrationStateCompleted {
+			ev.log.Info("Migration completed, continuing")
+			return true, nil
 		}
+		ev.log.Info("Migration not completed, waiting")
+		return false, nil
+	}
+
+	ev.log.Info("No existing migration found, creating new migration")
+	migration = &brokerv1alpha1.Migration{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      consumerObj.GetName(),      // TODO unique name?
+			Namespace: consumerObj.GetNamespace(), // TODO predetermined namespace?
+		},
+		Spec: brokerv1alpha1.MigrationSpec{
+			From: brokerv1alpha1.MigrationRef{
+				GVK:       migrationConfig.Spec.From,
+				Name:      consumerObj.GetName(),
+				Namespace: consumerObj.GetNamespace(),
+			},
+			To: brokerv1alpha1.MigrationRef{
+				GVK:       migrationConfig.Spec.To,
+				Name:      consumerObj.GetName(),
+				Namespace: consumerObj.GetNamespace(),
+			},
+		},
+	}
+
+	ev.log.Info("Creating migration config in coordination cluster")
+	if err := ev.coordination.Create(ctx, migration); err != nil {
+		return false, fmt.Errorf("failed to create Migration resource in consumer cluster %q: %w", ev.consumerName, err)
+	}
+
+	// Created migration, wait for next reconciliation to continue.
+	// At this point the migration reconciler should take over.
+	return false, nil
+}
+
+func (ev *genericReconcilerEvent) decorateInProvider(ctx context.Context, providerCluster cluster.Cluster) error {
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(ev.gvk)
+	if err := providerCluster.GetClient().Get(ctx, ev.req.NamespacedName, obj); err != nil {
 		return fmt.Errorf("failed to get resource from provider cluster %q: %w", ev.providerName, err)
 	}
 
-	if controllerutil.AddFinalizer(providerObj, genericFinalizer) {
-		if err := ev.providerCluster.GetClient().Update(ctx, providerObj); err != nil {
+	if controllerutil.AddFinalizer(obj, genericFinalizer) {
+		if err := providerCluster.GetClient().Update(ctx, obj); err != nil {
 			return fmt.Errorf("failed to add finalizer in provider: %w", err)
 		}
 	}
 
-	return setAnnotation(ctx, ev.providerCluster, providerObj, consumerClusterAnn, ev.consumerName)
+	return setAnnotation(ctx, providerCluster, obj, consumerClusterAnn, ev.consumerName)
 }
 
 func (ev *genericReconcilerEvent) providerAcceptsObj(ctx context.Context) (bool, error) {
@@ -450,19 +689,23 @@ func (ev *genericReconcilerEvent) providerAcceptsObj(ctx context.Context) (bool,
 		return false, fmt.Errorf("failed to get resource from consumer cluster %q: %w", ev.consumerName, err)
 	}
 
-	acceptAPIs, err := ev.getAcceptedAPIs(ev.providerName, ev.gvr)
+	acceptAPIs, err := ev.getProviderAcceptedAPIs(ev.providerName, ev.gvr)
 	if err != nil {
 		return false, err
 	}
 	for _, acceptAPI := range acceptAPIs {
-		if applies, _ := acceptAPI.AppliesTo(ev.gvr, obj); applies {
+		ev.log.Info("Checking provider AcceptAPI", "provider", ev.providerName, "acceptAPI", acceptAPI.Name)
+		applies, reasons := acceptAPI.AppliesTo(ev.gvr, obj)
+		if applies {
+			ev.log.Info("Provider AcceptAPI accepts obj", "provider", ev.providerName, "acceptAPI", acceptAPI.Name)
 			return true, nil
 		}
+		ev.log.Info("Provider AcceptAPI does not accept obj", "provider", ev.providerName, "acceptAPI", acceptAPI.Name, "reasons", reasons)
 	}
 	return false, nil
 }
 
-func (ev *genericReconcilerEvent) syncResource(ctx context.Context) error {
+func (ev *genericReconcilerEvent) syncResource(ctx context.Context, providerCluster cluster.Cluster) error {
 	ev.log.Info("Syncing resource between consumer and provider cluster")
 	// TODO send conditions back to consumer cluster
 	// TODO there should be two informers triggering this - one
@@ -472,13 +715,13 @@ func (ev *genericReconcilerEvent) syncResource(ctx context.Context) error {
 		ev.gvk,
 		ev.req.NamespacedName,
 		ev.consumerCluster.GetClient(),
-		ev.providerCluster.GetClient(),
+		providerCluster.GetClient(),
 	); err != nil {
 		ev.log.Error(err, "Failed to copy resource to provider cluster")
 		return err
 	}
 
-	return ev.decorateInProvider(ctx)
+	return ev.decorateInProvider(ctx, providerCluster)
 }
 
 func (ev *genericReconcilerEvent) getProviderStatus(ctx context.Context) (brokerv1alpha1.Status, bool, error) {
@@ -491,10 +734,25 @@ func (ev *genericReconcilerEvent) getProviderStatus(ctx context.Context) (broker
 	return brokerv1alpha1.Status(statusI), found, err
 }
 
-func (ev *genericReconcilerEvent) syncRelatedResources(ctx context.Context) error {
-	providerObj, err := ev.getProviderObj(ctx)
+func (ev *genericReconcilerEvent) getNewProviderStatus(ctx context.Context) (brokerv1alpha1.Status, bool, error) {
+	newProviderObj, err := ev.getNewProviderObj(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get resource from provider cluster %q: %w", ev.providerName, err)
+		return brokerv1alpha1.StatusUnknown, false, fmt.Errorf("failed to get resource from new provider cluster %q: %w", ev.newProviderName, err)
+	}
+
+	statusI, found, err := unstructured.NestedString(newProviderObj.Object, "status", "status")
+	return brokerv1alpha1.Status(statusI), found, err
+}
+
+func (ev *genericReconcilerEvent) syncRelatedResources(ctx context.Context, providerName string, providerCluster cluster.Cluster) error {
+	providerObj := &unstructured.Unstructured{}
+	providerObj.SetGroupVersionKind(ev.gvk)
+	if err := providerCluster.GetClient().Get(
+		ctx,
+		ev.req.NamespacedName,
+		providerObj,
+	); err != nil {
+		return fmt.Errorf("failed to get resource from provider cluster %q: %w", providerName, err)
 	}
 
 	// TODO handle resource drift when a related resource is removed in
@@ -533,18 +791,18 @@ func (ev *genericReconcilerEvent) syncRelatedResources(ctx context.Context) erro
 	}
 
 	for key, relatedResource := range relatedResources {
-		ev.syncRelatedResource(ctx, key, relatedResource, consumerObj)
+		ev.syncRelatedResource(ctx, providerCluster, key, relatedResource, consumerObj)
 	}
 
 	return nil
 }
 
-func (ev *genericReconcilerEvent) syncRelatedResource(ctx context.Context, key string, relatedResource brokerv1alpha1.RelatedResource, consumerObj *unstructured.Unstructured) {
+func (ev *genericReconcilerEvent) syncRelatedResource(ctx context.Context, providerCluster cluster.Cluster, key string, relatedResource brokerv1alpha1.RelatedResource, consumerObj *unstructured.Unstructured) {
 	log := ev.log.WithValues("relatedResourceKey", key)
 	log.Info("Syncing related resource", "relatedResource", relatedResource)
 	providerRRObj := &unstructured.Unstructured{}
 	providerRRObj.SetGroupVersionKind(relatedResource.SchemaGVK())
-	if err := ev.providerCluster.GetClient().Get(
+	if err := providerCluster.GetClient().Get(
 		ctx,
 		client.ObjectKey{
 			Namespace: relatedResource.Namespace,
@@ -564,7 +822,7 @@ func (ev *genericReconcilerEvent) syncRelatedResource(ctx context.Context, key s
 			Namespace: relatedResource.Namespace, // TODO namespace from consumer?
 			Name:      relatedResource.Name,
 		},
-		ev.providerCluster.GetClient(),
+		providerCluster.GetClient(),
 		ev.consumerCluster.GetClient(),
 	)
 	if err != nil {
