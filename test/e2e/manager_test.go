@@ -79,7 +79,7 @@ func TestManagerCopy(t *testing.T) {
 		assert.NoError(t, err)
 	}()
 
-	namespace := "default"
+	namespace := "default" //nolint:goconst,nolintlint
 	cmName := "test-configmap"
 
 	t.Log("Create ConfigMap in consumer control plane")
