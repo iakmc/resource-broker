@@ -112,6 +112,13 @@ func Setup(opts Options) (mctrl.Manager, error) {
 		return nil, fmt.Errorf("unable to start manager: %w", err)
 	}
 
+	// Add the coordination cluster to the manager as a runnable so it
+	// gets started when the manager is started, because the single
+	// provider does not start the cluster automatically.
+	if err := mgr.GetLocalManager().Add(coordinationCluster); err != nil {
+		return nil, fmt.Errorf("unable to add coordination cluster to manager: %w", err)
+	}
+
 	if _, err := broker.NewBroker(
 		opts.Name,
 		mgr,
