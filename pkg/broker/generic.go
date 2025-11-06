@@ -70,7 +70,7 @@ func (b *Broker) genericReconciler(name string, mgr mctrl.Manager, gvk schema.Gr
 
 			for possibleProvider, acceptedAPIs := range possibleProviders {
 				for _, acceptAPI := range acceptedAPIs {
-					if acceptAPI.AppliesTo(gvr, obj) {
+					if applies, _ := acceptAPI.AppliesTo(gvr, obj); applies {
 						return possibleProvider, nil
 					}
 				}
@@ -455,7 +455,7 @@ func (ev *genericReconcilerEvent) providerAcceptsObj(ctx context.Context) (bool,
 		return false, err
 	}
 	for _, acceptAPI := range acceptAPIs {
-		if acceptAPI.AppliesTo(ev.gvr, obj) {
+		if applies, _ := acceptAPI.AppliesTo(ev.gvr, obj); applies {
 			return true, nil
 		}
 	}
