@@ -83,13 +83,13 @@ func NewFrame(tb testing.TB) *Frame {
 
 func (f *Frame) Options(tb testing.TB) manager.Options {
 	return manager.Options{
-		Name:         tb.Name(),
-		Local:        f.Coordination.Config,
-		Compute:      f.Compute.Cluster.GetClient(),
-		Coordination: f.Coordination.Provider(),
-		Consumer:     f.Consumer.Provider(),
-		Provider:     f.Provider.Provider(),
-		MgrOptions:   ManagerOptions(),
+		Name:               tb.Name(),
+		Local:              f.Coordination.Config,
+		ComputeConfig:      f.Compute.Config,
+		CoordinationConfig: f.Coordination.Config,
+		Consumer:           f.Consumer.Provider(),
+		Provider:           f.Provider.Provider(),
+		MgrOptions:         ManagerOptions(),
 	}
 }
 

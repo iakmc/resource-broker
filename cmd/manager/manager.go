@@ -27,10 +27,12 @@ import (
 	"k8s.io/client-go/rest"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/cluster"
 
 	mctrl "sigs.k8s.io/multicluster-runtime"
 	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 	"sigs.k8s.io/multicluster-runtime/providers/multi"
+	"sigs.k8s.io/multicluster-runtime/providers/single"
 
 	brokerv1alpha1 "github.com/platform-mesh/resource-broker/api/broker/v1alpha1"
 	"github.com/platform-mesh/resource-broker/pkg/broker"
@@ -55,12 +57,12 @@ type Options struct {
 	// Compute is a client for the compute cluster. The compute cluster
 	// is where the actual resources required for platform operations
 	// are created.
-	Compute client.Client
+	ComputeConfig *rest.Config
 
-	// Coordination is a provider for the coordination cluster. The
+	// Coordination is a client for the coordination cluster. The
 	// coordination cluster is where the e.g. brokerv1alpha1.Migration
 	// resources are stored.
-	Coordination multicluster.Provider
+	CoordinationConfig *rest.Config
 
 	// Consumer and Provider are the multicluster providers for the
 	// consumer and provider clusters, respectively.
@@ -84,8 +86,25 @@ func Setup(opts Options) (mctrl.Manager, error) {
 	if err := providers.AddProvider(broker.ProviderPrefix, opts.Provider); err != nil {
 		return nil, fmt.Errorf("unable to add provider provider: %w", err)
 	}
-	if err := providers.AddProvider(broker.CoordinationPrefix, opts.Coordination); err != nil {
+
+	coordinationCluster, err := cluster.New(
+		opts.CoordinationConfig,
+		func(o *cluster.Options) {
+			o.Scheme = scheme.Scheme
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("unable to create coordination cluster: %w", err)
+	}
+	if err := providers.AddProvider(broker.CoordinationPrefix, single.New("coord", coordinationCluster)); err != nil {
 		return nil, fmt.Errorf("unable to add coordination provider: %w", err)
+	}
+
+	computeClient, err := client.New(opts.ComputeConfig, client.Options{
+		Scheme: scheme.Scheme,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("unable to create compute client: %w", err)
 	}
 
 	mgr, err := mctrl.NewManager(opts.Local, providers, opts.MgrOptions)
@@ -96,7 +115,8 @@ func Setup(opts Options) (mctrl.Manager, error) {
 	if _, err := broker.NewBroker(
 		opts.Name,
 		mgr,
-		opts.Compute,
+		coordinationCluster.GetClient(),
+		computeClient,
 		opts.GVKs...,
 	); err != nil {
 		return nil, fmt.Errorf("unable to set up broker with manager: %w", err)
