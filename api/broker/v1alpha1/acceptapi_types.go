@@ -42,10 +42,18 @@ type AcceptAPISpec struct {
 
 // Filter defines a filter to select resources.
 type Filter struct {
-	// +kubebuilder:validation:Required
+	// Key is the spec key to filter on.
+	// +required
 	// +kubebuilder:validation:MinLength=1
-	Key      string   `json:"key"`
-	ValueIn  []string `json:"valueIn,omitempty"`
+	// +kubebuilder:validation:XValidation:rule="!self.startsWith('spec.')",message="Key must not start with 'spec.' as it is implied"
+	Key string `json:"key"`
+
+	// ValueIn is the list of allowed values for the key.
+	// +optional
+	ValueIn []string `json:"valueIn,omitempty"`
+
+	// Boundary defines min and/or max boundaries for numeric filtering.
+	// +optional
 	Boundary Boundary `json:"boundary,omitempty"`
 }
 
@@ -56,10 +64,19 @@ type Boundary struct {
 }
 
 // AppliesTo checks if the given object matches the filters.
-func (acceptAPI *AcceptAPI) AppliesTo(gvr metav1.GroupVersionResource, obj *unstructured.Unstructured) bool {
+func (acceptAPI *AcceptAPI) AppliesTo(gvr metav1.GroupVersionResource, obj *unstructured.Unstructured) (bool, []AcceptAPIDenyReason) {
 	if acceptAPI.Spec.GVR.String() != gvr.String() {
-		return false
+		return false, []AcceptAPIDenyReason{
+			{
+				Key:    "gvr",
+				Reason: "GVR does not match",
+				Rule:   acceptAPI.Spec.GVR.String(),
+				Value:  gvr.String(),
+			},
+		}
 	}
+
+	reasons := []AcceptAPIDenyReason{}
 
 	for _, filter := range acceptAPI.Spec.Filters {
 		fields := []string{"spec"}
@@ -67,7 +84,7 @@ func (acceptAPI *AcceptAPI) AppliesTo(gvr metav1.GroupVersionResource, obj *unst
 
 		valRaw, found, err := unstructured.NestedFieldNoCopy(obj.Object, fields...)
 		if err != nil || !found {
-			return false
+			continue
 		}
 
 		// Convert to string for consistent comparison across different numeric and string types.
@@ -78,26 +95,55 @@ func (acceptAPI *AcceptAPI) AppliesTo(gvr metav1.GroupVersionResource, obj *unst
 
 		if len(filter.ValueIn) > 0 {
 			if !slices.Contains(filter.ValueIn, val) {
-				return false
+				reasons = append(reasons, AcceptAPIDenyReason{
+					Key:    filter.Key,
+					Reason: "Value not in allowed set",
+					Rule:   strings.Join(filter.ValueIn, ","),
+					Value:  val,
+				})
 			}
 		}
 
 		if filter.Boundary.Min != nil && *filter.Boundary.Min >= 0 {
 			numVal, err := strconv.Atoi(val)
 			if err != nil || numVal < *filter.Boundary.Min {
-				return false
+				reasons = append(reasons, AcceptAPIDenyReason{
+					Key:    filter.Key,
+					Reason: "Value below minimum boundary",
+					Rule:   strconv.Itoa(*filter.Boundary.Min),
+					Value:  val,
+				})
 			}
 		}
 
 		if filter.Boundary.Max != nil && *filter.Boundary.Max >= 0 {
 			numVal, err := strconv.Atoi(val)
 			if err != nil || numVal > *filter.Boundary.Max {
-				return false
+				reasons = append(reasons, AcceptAPIDenyReason{
+					Key:    filter.Key,
+					Reason: "Value above maximum boundary",
+					Rule:   strconv.Itoa(*filter.Boundary.Max),
+					Value:  val,
+				})
 			}
 		}
 	}
 
-	return true
+	return len(reasons) == 0, reasons
+}
+
+// AcceptAPIDenyReason is returned by AcceptAPI when it denies an
+// object.
+type AcceptAPIDenyReason struct {
+	// Key is the key of the field that caused the denial.
+	Key string
+	// Reason is a human-readable reason for the denial.
+	Reason string
+	// Value is the value of the field that caused the denial.
+	Value string
+	// Rule is the rule that was checked against, e.g. the GVR or the
+	// list of allowed values.
+	Rule string
 }
 
 // AcceptAPIStatus defines the observed state of AcceptAPI.
