@@ -44,3 +44,20 @@ const (
 	// StatusFailed indicates that the resource has failed.
 	StatusFailed Status = "Failed"
 )
+
+// Continue returns true if the status indicates that processing
+// can continue.
+func (s Status) Continue() bool {
+	switch s {
+	case StatusEmpty, StatusUnknown, StatusProvisioning:
+		// Empty blocks because it was likely just created.
+		// Unknown blocks because it has not been processed yet.
+		// Provisioning blocks because it is still being provisioned.
+		return false
+	default:
+		// All other states (Available, Degraded, Deleting, Failed)
+		// allow processing to continue, as their conditions and
+		// possibly related resources may need to be synced.
+		return true
+	}
+}
