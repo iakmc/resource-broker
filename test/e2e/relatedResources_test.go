@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes/scheme"
 
@@ -36,13 +37,14 @@ import (
 	"github.com/platform-mesh/resource-broker/cmd/manager"
 )
 
+func init() {
+	runtime.Must(examplev1alpha1.AddToScheme(scheme.Scheme))
+}
+
 // TestRelatedResources tests that related resources are copied from
 // target to source cluster.
 func TestRelatedResources(t *testing.T) {
 	t.Parallel()
-
-	// For the VM kind to be available
-	require.NoError(t, examplev1alpha1.AddToScheme(scheme.Scheme))
 
 	frame := NewFrame(t)
 
