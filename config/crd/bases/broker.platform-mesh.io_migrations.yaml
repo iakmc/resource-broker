@@ -42,6 +42,11 @@ spec:
               from:
                 description: From indicates the source resource to be migrated.
                 properties:
+                  clusterName:
+                    description: ClusterName is the name of the cluster where the
+                      resource resides.
+                    minLength: 1
+                    type: string
                   gvk:
                     description: GVK is the GroupVersionKind of the resource.
                     properties:
@@ -58,17 +63,24 @@ spec:
                     type: object
                   name:
                     description: Name is the name of the resource.
+                    minLength: 1
                     type: string
                   namespace:
                     description: Namespace is the namespace of the resource.
                     type: string
                 required:
+                - clusterName
                 - gvk
                 - name
                 type: object
               to:
                 description: To indicates the target resource to be migrated.
                 properties:
+                  clusterName:
+                    description: ClusterName is the name of the cluster where the
+                      resource resides.
+                    minLength: 1
+                    type: string
                   gvk:
                     description: GVK is the GroupVersionKind of the resource.
                     properties:
@@ -85,11 +97,13 @@ spec:
                     type: object
                   name:
                     description: Name is the name of the resource.
+                    minLength: 1
                     type: string
                   namespace:
                     description: Namespace is the namespace of the resource.
                     type: string
                 required:
+                - clusterName
                 - gvk
                 - name
                 type: object
@@ -170,10 +184,11 @@ spec:
                 - type
                 x-kubernetes-list-type: map
               id:
-                description: ID is a unique identifier for the migration stage.
+                description: id is a unique identifier for the migration.
                 type: string
               stage:
-                description: stage is a descriptive name for the migration stage.
+                description: stage is the stage of the migration process, the value
+                  is the id of the current stage from the MigrationConfiguration.
                 type: string
               state:
                 description: state represents the current state of the Migration process.
