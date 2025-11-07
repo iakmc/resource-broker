@@ -39,14 +39,31 @@ type MigrationConfigurationSpec struct {
 
 // MigrationStage defines a single stage in a migration process.
 type MigrationStage struct {
-	// ID is a unique identifier for the migration stage.
+	// name is a descriptive name of the migration stage.
+	// It will be displayed in logs and status conditions.
 	// +required
-	ID string `json:"id"`
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
 
-	// Templates is a list of raw Kubernetes resource templates of
-	// resources to be deployed as part of this migration stage.
+	// successConditions is a list of CEL expressions that must all be
+	// true for the stage to be considered successful.
+	// Warning: If empty the resources are deployed and the stage is
+	// immediately considered successful in the next reconciliation
+	// loop.
 	// +optional
-	Templates []runtime.RawExtension `json:"templates,omitempty"`
+	SuccessConditions []string `json:"successConditions,omitempty"`
+
+	// templates is a map of Kubernetes resource templates of resources
+	// to be deployed as part of this migration stage. The key makes the
+	// respective resources available to reference in CEL expressions,
+	// e.g. in SuccessConditions.
+	// +optional
+	Templates map[string]runtime.RawExtension `json:"templates,omitempty"`
+
+	// progress indicates whether the migration should move from the
+	// initial to the cutover phase once the success conditions are met.
+	// +optional
+	Progress bool `json:"progress,omitempty"`
 }
 
 // +kubebuilder:object:root=true
