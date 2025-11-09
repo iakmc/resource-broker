@@ -18,25 +18,14 @@ limitations under the License.
 package broker
 
 import (
-	"context"
-
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-
-	"sigs.k8s.io/controller-runtime/pkg/cluster"
 )
 
-func setAnnotation(ctx context.Context, cl cluster.Cluster, obj *unstructured.Unstructured, key, value string) error {
+func setAnnotation(obj *unstructured.Unstructured, key, value string) {
 	anns := obj.GetAnnotations()
-	if anns[key] == value {
-		return nil
-	}
 	if anns == nil {
 		anns = make(map[string]string)
 	}
 	anns[key] = value
 	obj.SetAnnotations(anns)
-	if err := cl.GetClient().Update(ctx, obj); err != nil {
-		return err
-	}
-	return nil
 }

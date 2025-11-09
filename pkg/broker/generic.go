@@ -161,9 +161,16 @@ func (gr *genericReconciler) Reconcile(ctx context.Context, req mcreconcile.Requ
 		return mctrl.Result{}, err
 	}
 
-	providerAccepts, err := ev.providerAcceptsObj(ctx)
-	if err != nil {
-		return mctrl.Result{}, err
+	providerAccepts := false
+
+	// Only check provider acceptance if there isn't already a migration
+	// going on.
+	if _, ok := consumerObj.GetAnnotations()[newProviderClusterAnn]; !ok {
+		var err error
+		providerAccepts, err = ev.providerAcceptsObj(ctx)
+		if err != nil {
+			return mctrl.Result{}, err
+		}
 	}
 
 	if !providerAccepts {
@@ -181,20 +188,32 @@ func (gr *genericReconciler) Reconcile(ctx context.Context, req mcreconcile.Requ
 			return mctrl.Result{}, nil
 		}
 
-		cont, err := ev.migrate(ctx, consumerObj)
+		cont, state, err := ev.migrate(ctx, consumerObj)
 		if err != nil {
+			ev.log.Error(err, "Failed to check migration status")
 			return mctrl.Result{}, err
 		}
 		if !cont {
+			ev.log.Info("Migration not yet ready to continue, waiting")
 			return mctrl.Result{}, nil
 		}
 
-		ev.log.Info("Migration finished, syncing related resources from new provider")
-		if err := ev.syncRelatedResources(ctx, ev.newProviderName, ev.newProviderCluster); err != nil {
-			return mctrl.Result{}, err
+		// Copy related resources from new provider when the cutover
+		// to the new provider can start.
+		switch state {
+		case brokerv1alpha1.MigrationStateInitialCompleted, brokerv1alpha1.MigrationStateCutoverInProgress, brokerv1alpha1.MigrationStateCutoverCompleted:
+			ev.log.Info("Syncing related resources from new provider")
+			if err := ev.syncRelatedResources(ctx, ev.newProviderName, ev.newProviderCluster); err != nil {
+				return mctrl.Result{}, err
+			}
 		}
 
-		ev.log.Info("Synced related resources from new provider, deleting from old provider")
+		if state != brokerv1alpha1.MigrationStateCutoverCompleted {
+			ev.log.Info("Migration not yet completed, waiting")
+			return mctrl.Result{}, nil
+		}
+
+		ev.log.Info("Deleting from old provider")
 		if err := ev.deleteObj(ctx, ev.providerCluster); err != nil {
 			return mctrl.Result{}, fmt.Errorf("failed to delete resource from old provider cluster %q: %w", ev.providerName, err)
 		}
@@ -213,9 +232,11 @@ func (gr *genericReconciler) Reconcile(ctx context.Context, req mcreconcile.Requ
 
 	status, found, err := ev.getProviderStatus(ctx)
 	if err != nil {
+		ev.log.Error(err, "Failed to get provider status")
 		return mctrl.Result{}, err
 	}
 	if found && !status.Continue() {
+		ev.log.Info("Provider status indicates to not continue")
 		return mctrl.Result{}, nil
 	}
 
@@ -534,16 +555,18 @@ func (ev *genericReconcilerEvent) decorateInConsumer(ctx context.Context) error 
 		anns = make(map[string]string)
 	}
 
-	if ev.providerName != "" {
-		anns[providerClusterAnn] = ev.providerName
-	} else {
+	switch ev.providerName {
+	case "":
 		delete(anns, providerClusterAnn)
+	default:
+		anns[providerClusterAnn] = ev.providerName
 	}
 
-	if ev.newProviderName != "" {
-		anns[newProviderClusterAnn] = ev.newProviderName
-	} else {
+	switch ev.newProviderName {
+	case "":
 		delete(anns, newProviderClusterAnn)
+	default:
+		anns[newProviderClusterAnn] = ev.newProviderName
 	}
 
 	consumerObj.SetAnnotations(anns)
@@ -571,7 +594,12 @@ func (ev *genericReconcilerEvent) newProvider(ctx context.Context, consumerObj *
 		return fmt.Errorf("failed to get new provider cluster %q: %w", ev.newProviderName, err)
 	}
 
-	if err := setAnnotation(ctx, ev.consumerCluster, consumerObj, newProviderClusterAnn, ev.newProviderName); err != nil {
+	consumerObj, err = ev.getConsumerObj(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get resource from consumer cluster %q: %w", ev.consumerName, err)
+	}
+	setAnnotation(consumerObj, newProviderClusterAnn, ev.newProviderName)
+	if err := ev.consumerCluster.GetClient().Update(ctx, consumerObj); err != nil {
 		return fmt.Errorf("failed to set new provider cluster annotation in consumer: %w", err)
 	}
 
@@ -584,8 +612,8 @@ func (ev *genericReconcilerEvent) newProvider(ctx context.Context, consumerObj *
 
 // migrate handles migration of the resource from one provider to
 // another.
-// It returns true if the caller can continue execution.
-func (ev *genericReconcilerEvent) migrate(ctx context.Context, consumerObj *unstructured.Unstructured) (bool, error) {
+// The first boolean returns whether the reconciliation can continue.
+func (ev *genericReconcilerEvent) migrate(ctx context.Context, consumerObj *unstructured.Unstructured) (bool, brokerv1alpha1.MigrationState, error) {
 	from := metav1.GroupVersionKind{
 		Group:   ev.gvk.Group,
 		Version: ev.gvk.Version,
@@ -599,7 +627,7 @@ func (ev *genericReconcilerEvent) migrate(ctx context.Context, consumerObj *unst
 	migrationConfig, found := ev.getMigrationConfiguration(from, to)
 	if !found {
 		ev.log.Info("No migration configuration found, continuing", "from", from, "to", to)
-		return true, nil
+		return true, brokerv1alpha1.MigrationStateCutoverCompleted, nil
 	}
 
 	migration := &brokerv1alpha1.Migration{}
@@ -613,27 +641,11 @@ func (ev *genericReconcilerEvent) migrate(ctx context.Context, consumerObj *unst
 	)
 	if err != nil && !apierrors.IsNotFound(err) {
 		ev.log.Error(err, "Failed to get Migration resource")
-		return false, fmt.Errorf("failed to get Migration resource: %w", err)
+		return false, brokerv1alpha1.MigrationStateUnknown, fmt.Errorf("failed to get Migration resource: %w", err)
 	}
 	if err == nil {
 		ev.log.Info("Found existing Migration")
-
-		// TODO temporary, remove when migration reconciler is
-		// implemented
-		func() {
-			migration.Status.State = brokerv1alpha1.MigrationStateCompleted
-			if err := ev.coordination.Status().Update(ctx, migration); err != nil {
-				ev.log.Error(err, "Failed to update Migration resource status after creation")
-				return
-			}
-		}()
-
-		if migration.Status.State == brokerv1alpha1.MigrationStateCompleted {
-			ev.log.Info("Migration completed, continuing")
-			return true, nil
-		}
-		ev.log.Info("Migration not completed, waiting")
-		return false, nil
+		return true, migration.Status.State, nil
 	}
 
 	ev.log.Info("No existing migration found, creating new migration")
@@ -644,26 +656,28 @@ func (ev *genericReconcilerEvent) migrate(ctx context.Context, consumerObj *unst
 		},
 		Spec: brokerv1alpha1.MigrationSpec{
 			From: brokerv1alpha1.MigrationRef{
-				GVK:       migrationConfig.Spec.From,
-				Name:      consumerObj.GetName(),
-				Namespace: consumerObj.GetNamespace(),
+				GVK:         migrationConfig.Spec.From,
+				Name:        consumerObj.GetName(),
+				Namespace:   consumerObj.GetNamespace(),
+				ClusterName: ev.providerName,
 			},
 			To: brokerv1alpha1.MigrationRef{
-				GVK:       migrationConfig.Spec.To,
-				Name:      consumerObj.GetName(),
-				Namespace: consumerObj.GetNamespace(),
+				GVK:         migrationConfig.Spec.To,
+				Name:        consumerObj.GetName(),
+				Namespace:   consumerObj.GetNamespace(),
+				ClusterName: ev.newProviderName,
 			},
 		},
 	}
 
 	ev.log.Info("Creating migration config in coordination cluster")
 	if err := ev.coordination.Create(ctx, migration); err != nil {
-		return false, fmt.Errorf("failed to create Migration resource in consumer cluster %q: %w", ev.consumerName, err)
+		return false, brokerv1alpha1.MigrationStateUnknown, fmt.Errorf("failed to create Migration resource in consumer cluster %q: %w", ev.consumerName, err)
 	}
 
 	// Created migration, wait for next reconciliation to continue.
 	// At this point the migration reconciler should take over.
-	return false, nil
+	return false, brokerv1alpha1.MigrationStateUnknown, nil
 }
 
 func (ev *genericReconcilerEvent) decorateInProvider(ctx context.Context, providerCluster cluster.Cluster) error {
@@ -679,7 +693,11 @@ func (ev *genericReconcilerEvent) decorateInProvider(ctx context.Context, provid
 		}
 	}
 
-	return setAnnotation(ctx, providerCluster, obj, consumerClusterAnn, ev.consumerName)
+	setAnnotation(obj, consumerClusterAnn, ev.consumerName)
+	if err := providerCluster.GetClient().Update(ctx, obj); err != nil {
+		return fmt.Errorf("failed to set annotations in provider: %w", err)
+	}
+	return nil
 }
 
 func (ev *genericReconcilerEvent) providerAcceptsObj(ctx context.Context) (bool, error) {
@@ -709,14 +727,14 @@ func (ev *genericReconcilerEvent) syncResource(ctx context.Context, providerClus
 	// TODO send conditions back to consumer cluster
 	// TODO there should be two informers triggering this - one
 	// for consumer and one for provider
-	if _, err := CopyResource(
+	if cond, err := CopyResource(
 		ctx,
 		ev.gvk,
 		ev.req.NamespacedName,
 		ev.consumerCluster.GetClient(),
 		providerCluster.GetClient(),
 	); err != nil {
-		ev.log.Error(err, "Failed to copy resource to provider cluster")
+		ev.log.Error(err, "Failed to copy resource to provider cluster", "condition", cond)
 		return err
 	}
 
