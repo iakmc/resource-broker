@@ -61,6 +61,8 @@ func StripClusterMetadata(obj *unstructured.Unstructured) *unstructured.Unstruct
 		delete(m, "generation")
 		delete(m, "ownerReferences")
 		delete(m, "finalizers")
+		delete(m, "annotations")
+		delete(m, "labels")
 	}
 	return c
 }
