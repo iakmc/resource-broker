@@ -29,7 +29,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -745,44 +744,18 @@ func (ev *genericReconcilerEvent) getNewProviderStatus(ctx context.Context) (bro
 }
 
 func (ev *genericReconcilerEvent) syncRelatedResources(ctx context.Context, providerName string, providerCluster cluster.Cluster) error {
-	providerObj := &unstructured.Unstructured{}
-	providerObj.SetGroupVersionKind(ev.gvk)
-	if err := providerCluster.GetClient().Get(
-		ctx,
-		ev.req.NamespacedName,
-		providerObj,
-	); err != nil {
-		return fmt.Errorf("failed to get resource from provider cluster %q: %w", providerName, err)
-	}
-
 	// TODO handle resource drift when a related resource is removed in
 	// the provider it needs to be removed in the consumer
 	// maybe just a finalizer on the resources in the provider?
-	relatedResourcesI, found, err := unstructured.NestedMap(providerObj.Object, "status", "relatedResources")
+	relatedResources, err := collectRelatedResources(ctx, providerCluster.GetClient(), ev.gvk, ev.req.NamespacedName)
 	if err != nil {
-		ev.log.Error(err, "Failed to get related resources from synced resource status")
-		return err
+		return fmt.Errorf("failed to collect related resources from provider cluster %q: %w", providerName, err)
 	}
-	if !found {
-		ev.log.Info("No related resources found in synced resource status")
+
+	if len(relatedResources) == 0 {
+		ev.log.Info("No related resources to sync from provider to consumer")
 		return nil
 	}
-
-	relatedResources := make(map[string]brokerv1alpha1.RelatedResource, len(relatedResourcesI))
-	for key, rrI := range relatedResourcesI {
-		rrMap, ok := rrI.(map[string]interface{})
-		if !ok {
-			return fmt.Errorf("failed to cast related resource from synced resource status")
-		}
-
-		var rr brokerv1alpha1.RelatedResource
-		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(rrMap, &rr); err != nil {
-			return fmt.Errorf("failed to convert related resource from synced resource status: %w", err)
-		}
-
-		relatedResources[key] = rr
-	}
-
 	ev.log.Info("Syncing related resources from provider to consumer", "count", len(relatedResources))
 
 	consumerObj, err := ev.getConsumerObj(ctx)
