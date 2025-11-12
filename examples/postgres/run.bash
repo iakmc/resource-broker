@@ -4,15 +4,14 @@ log() { echo ">>> $@"; }
 die() { echo "!!! $@" >&2; exit 1; }
 
 # cd into repo root
-cd "$(dirname "$0")/.." || die "Failed to change directory"
-
-# set -x
+example_dir="$(dirname "$0")"
+cd "$(dirname "$0")/../.." || die "Failed to change directory"
 
 command -v kind &>/dev/null || die "kind is not installed. Please install kind to proceed."
+command -v helm &>/dev/null || die "helm is not installed. Please install helm to proceed."
 
 # kind get clusters | grep broker- | xargs -r -n1 kind delete cluster --name
 
-example_dir="$PWD/example"
 kubeconfigs="$PWD/kubeconfigs"
 log "Using directory for kubeconfigs: $kubeconfigs"
 
