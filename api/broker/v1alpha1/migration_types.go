@@ -39,10 +39,15 @@ type MigrationRef struct {
 	GVK metav1.GroupVersionKind `json:"gvk"`
 	// Name is the name of the resource.
 	// +required
+	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
 	// Namespace is the namespace of the resource.
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
+	// ClusterName is the name of the cluster where the resource resides.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	ClusterName string `json:"clusterName,omitempty"`
 }
 
 // MigrationStatus defines the observed state of Migration.
@@ -63,10 +68,10 @@ type MigrationStatus struct {
 	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
-	// ID is a unique identifier for the migration stage.
+	// id is a unique identifier for the migration.
 	ID string `json:"id,omitempty"`
 
-	// stage is a descriptive name for the migration stage.
+	// stage is the stage of the migration process, the value is the id of the current stage from the MigrationConfiguration.
 	Stage string `json:"stage,omitempty"`
 }
 
@@ -74,12 +79,23 @@ type MigrationStatus struct {
 type MigrationState string
 
 const (
-	// MigrationStatePending indicates that the migration is pending and has not yet started.
+	// MigrationStateUnknown is the default, empty state.
+	MigrationStateUnknown MigrationState = ""
+	// MigrationStatePending means that the migration has been picked up by a reconciler but has not started yet.
 	MigrationStatePending MigrationState = "Pending"
-	// MigrationStateInProgress indicates that the migration is currently in progress.
-	MigrationStateInProgress MigrationState = "InProgress"
-	// MigrationStateCompleted indicates that the migration has been completed successfully.
-	MigrationStateCompleted MigrationState = "Completed"
+	// MigrationStateInitialInProgress indicates that the initial
+	// migration is in progress.
+	MigrationStateInitialInProgress MigrationState = "InitialInProgress"
+	// MigrationStateInitialCompleted indicates that the initial
+	// migration has been completed and that resources for the consumer
+	// can be switched.
+	MigrationStateInitialCompleted MigrationState = "InitialCompleted"
+	// MigrationStateCutoverInProgress indicates that the cutover
+	// migration is in progress.
+	MigrationStateCutoverInProgress MigrationState = "CutoverInProgress"
+	// MigrationStateCutoverCompleted indicates that the cutover
+	// migration has been completed successfully.
+	MigrationStateCutoverCompleted MigrationState = "CutoverCompleted"
 	// MigrationStateFailed indicates that the migration has failed.
 	MigrationStateFailed MigrationState = "Failed"
 )
