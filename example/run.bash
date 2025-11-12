@@ -37,11 +37,13 @@ if [[ "$1" == "clean" ]]; then
     kubectl --kubeconfig "$providers/db.kubeconfig" delete --wait=false pgs/pg-from-consumer
     kubectl --kubeconfig "$providers/db.kubeconfig" patch pgs/pg-from-consumer \
         --type merge -p '{"metadata":{"finalizers":[]}}'
+    kubectl --kubeconfig "$providers/db.kubeconfig" delete --wait=false clusters/pg-from-consumer
 
     log "Delete PG in provider cloud"
     kubectl --kubeconfig "$providers/cloud.kubeconfig" delete --wait=false pgs/pg-from-consumer
     kubectl --kubeconfig "$providers/cloud.kubeconfig" patch pgs/pg-from-consumer \
         --type merge -p '{"metadata":{"finalizers":[]}}'
+    kubectl --kubeconfig "$providers/cloud.kubeconfig" delete --wait=false clusters/pg-from-consumer
 
     exit 0
 fi
