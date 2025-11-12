@@ -24,35 +24,24 @@ import (
 // It should be embedded in the status of resources that should be
 // synchronized by the generic reconciler.
 type RelatedResource struct {
-	// +kubebuilder:validation:Optional
+	// +optional
 	Namespace string `json:"namespace,omitempty"`
-	// +kubebuilder:validation:Required
+	// +required
 	Name string `json:"name"`
-	// +kubebuilder:validation:Required
+	// +required
 	GVK metav1.GroupVersionKind `json:"gvk"`
 }
 
 // SchemaGVK returns the schema.GroupVersionKind of the GVK.
 func (rr RelatedResource) SchemaGVK() schema.GroupVersionKind {
-	// TODO this a temporary workaround because kro currently doesn't
-	// handle static fields
 	group := rr.GVK.Group
-	if group == "" {
+	if group == "core" {
 		group = ""
 	}
-	version := rr.GVK.Version
-	if version == "" {
-		version = "v1"
-	}
-	kind := rr.GVK.Kind
-	if kind == "" {
-		kind = "Secret"
-	}
-
 	return schema.GroupVersionKind{
 		Group:   group,
-		Version: version,
-		Kind:    kind,
+		Version: rr.GVK.Version,
+		Kind:    rr.GVK.Kind,
 	}
 }
 

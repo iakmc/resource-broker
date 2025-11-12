@@ -17,23 +17,23 @@ spec:
       relatedResources:
         secret:
           gvk:
-            group: core
-            version: v1
-            kind: Secret
+            group: ${secret.apiVersion == "v1" ? "core":secret.apiVersion.split("/")[0]}
+            version: ${secret.?apiVersion}
+            kind: ${secret.?kind}
           name: ${cluster.metadata.name + "-app"}
           namespace: ${cluster.metadata.namespace}
         hostSecret:
           gvk:
-            group: core
-            version: v1
-            kind: Secret
+            group: ${hostSecret.apiVersion == "v1" ? "core":hostSecret.apiVersion.split("/")[0]}
+            version: ${hostSecret.?apiVersion}
+            kind: ${hostSecret.?kind}
           name: ${cluster.metadata.name + "-host"}
           namespace: ${cluster.metadata.namespace}
         clientCASecret:
           gvk:
-            group: core
-            version: v1
-            kind: Secret
+            group: ${clientCASecret.apiVersion == "v1" ? "core":clientCASecret.apiVersion.split("/")[0]}
+            version: ${clientCASecret.?apiVersion}
+            kind: ${clientCASecret.?kind}
           name: ${cluster.status.certificates.clientCASecret}
           namespace: ${cluster.metadata.namespace}
 
@@ -66,6 +66,14 @@ spec:
           name: ${schema.metadata.name}-nodeport
           namespace: ${schema.metadata.namespace}
 
+    - id: secret
+      externalRef:
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: ${cluster.metadata.name}-app
+          namespace: ${cluster.metadata.namespace}
+
     - id: hostSecret
       template:
         apiVersion: v1
@@ -78,3 +86,11 @@ spec:
           host: broker-db-control-plane
           # without the conversion the port is interpreted as value.valueUnstructured and errors
           port: ${string(service.spec.ports[0].nodePort)}
+
+    - id: clientCASecret
+      externalRef:
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: ${cluster.status.certificates.clientCASecret}
+          namespace: ${schema.metadata.namespace}
