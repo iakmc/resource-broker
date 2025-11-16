@@ -229,7 +229,7 @@ func (gr *genericReconciler) reconcile(ctx context.Context) (mctrl.Result, error
 		return mctrl.Result{Requeue: true}, gr.decorateInConsumer(ctx)
 	}
 
-	if err := gr.syncResource(ctx, gr.providerCluster); err != nil {
+	if err := gr.syncResource(ctx, gr.providerName, gr.providerCluster); err != nil {
 		return mctrl.Result{}, err
 	}
 
@@ -584,7 +584,7 @@ func (gr *genericReconciler) newProvider(ctx context.Context, consumerObj *unstr
 		return fmt.Errorf("failed to set new provider cluster annotation in consumer: %w", err)
 	}
 
-	if err := gr.syncResource(ctx, gr.newProviderCluster); err != nil {
+	if err := gr.syncResource(ctx, gr.newProviderName, gr.newProviderCluster); err != nil {
 		return fmt.Errorf("failed to sync resource to new provider cluster %q: %w", gr.newProviderName, err)
 	}
 
@@ -661,11 +661,11 @@ func (gr *genericReconciler) migrate(ctx context.Context, consumerObj *unstructu
 	return false, brokerv1alpha1.MigrationStateUnknown, nil
 }
 
-func (gr *genericReconciler) decorateInProvider(ctx context.Context, providerCluster cluster.Cluster) error {
+func (gr *genericReconciler) decorateInProvider(ctx context.Context, providerName string, providerCluster cluster.Cluster) error {
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(gr.gvk)
 	if err := providerCluster.GetClient().Get(ctx, gr.req.NamespacedName, obj); err != nil {
-		return fmt.Errorf("failed to get resource from provider cluster %q: %w", gr.providerName, err)
+		return fmt.Errorf("failed to get resource from provider cluster %q: %w", providerName, err)
 	}
 
 	if controllerutil.AddFinalizer(obj, genericFinalizer) {
@@ -703,7 +703,7 @@ func (gr *genericReconciler) providerAcceptsObj(ctx context.Context) (bool, erro
 	return false, nil
 }
 
-func (gr *genericReconciler) syncResource(ctx context.Context, providerCluster cluster.Cluster) error {
+func (gr *genericReconciler) syncResource(ctx context.Context, providerName string, providerCluster cluster.Cluster) error {
 	gr.log.Info("Syncing resource between consumer and provider cluster")
 	// TODO send conditions back to consumer cluster
 	// TODO there should be two informers triggering this - one
@@ -719,7 +719,7 @@ func (gr *genericReconciler) syncResource(ctx context.Context, providerCluster c
 		return err
 	}
 
-	return gr.decorateInProvider(ctx, providerCluster)
+	return gr.decorateInProvider(ctx, providerName, providerCluster)
 }
 
 func (gr *genericReconciler) getProviderStatus(ctx context.Context) (brokerv1alpha1.Status, bool, error) {
