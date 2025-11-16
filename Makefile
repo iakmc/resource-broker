@@ -19,6 +19,8 @@ CONTAINER_TOOL ?= docker
 SHELL = /usr/bin/env bash -o pipefail
 .SHELLFLAGS = -ec
 
+MODULES = $(shell find . -iname 'go.mod' -exec dirname {} \;)
+
 .PHONY: all
 all: build
 
@@ -58,11 +60,19 @@ codegen: manifests generate ## Generate code and manifests.
 
 .PHONY: fmt
 fmt: ## Run go fmt against code.
-	go fmt ./...
+	@for module in $(MODULES); do \
+		echo "Running go fmt in $$module"; \
+		cd $$module && go fmt ./... || exit 1; \
+		cd - > /dev/null; \
+	done
 
 .PHONY: vet
 vet: ## Run go vet against code.
-	go vet ./...
+	@for module in $(MODULES); do \
+		echo "Running go vet in $$module"; \
+		cd $$module && go vet ./... || exit 1; \
+		cd - > /dev/null; \
+	done
 
 .PHONY: test
 test: manifests generate fmt vet ## Run tests.
@@ -73,13 +83,23 @@ test-e2e: manifests generate fmt vet setup-envtest ## Run the e2e tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
 		go test ./test/e2e/... $(TEST_ARGS)
 
+GOLANGCI_LINT_CONFIG ?= $(PWD)/.golangci.yml
+
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
-	$(GOLANGCI_LINT) run
+	@for module in $(MODULES); do \
+		echo "Running golangci-lint in $$module"; \
+		cd $$module && $(GOLANGCI_LINT) run --config $(GOLANGCI_LINT_CONFIG) || exit 1; \
+		cd - > /dev/null; \
+	done
 
 .PHONY: lint-fix
 lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
-	$(GOLANGCI_LINT) run --fix
+	@for module in $(MODULES); do \
+		echo "Running golangci-lint in $$module"; \
+		cd $$module && $(GOLANGCI_LINT) run --config $(GOLANGCI_LINT_CONFIG) --fix || exit 1; \
+		cd - > /dev/null; \
+	done
 
 .PHONY: lint-config
 lint-config: golangci-lint ## Verify golangci-lint linter configuration
