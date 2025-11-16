@@ -149,8 +149,9 @@ func NewBroker(
 		For(&brokerv1alpha1.Migration{}).
 		Complete(
 			migration.MigrationReconcilerFunc(migration.MigrationOptions{
-				Compute:    b.compute,
-				GetCluster: mgr.GetCluster,
+				Compute:                b.compute,
+				GetCoordinationCluster: mgr.GetCluster,
+				GetProviderCluster:     mgr.GetCluster,
 				GetMigrationConfiguration: func(fromGVK metav1.GroupVersionKind, toGVK metav1.GroupVersionKind) (brokerv1alpha1.MigrationConfiguration, bool) {
 					b.lock.RLock()
 					defer b.lock.RUnlock()
