@@ -15,7 +15,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package broker
+package migration
 
 import (
 	"context"
@@ -39,48 +39,46 @@ import (
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
 	mctrl "sigs.k8s.io/multicluster-runtime"
-	mcbuilder "sigs.k8s.io/multicluster-runtime/pkg/builder"
 	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
 
 	brokerv1alpha1 "github.com/platform-mesh/resource-broker/api/broker/v1alpha1"
+	brokerutils "github.com/platform-mesh/resource-broker/pkg/utils"
 )
+
+// MigrationOptions holds the options for the migration reconciler.
+type MigrationOptions struct { //nolint:revive
+	Compute                   client.Client
+	GetCluster                func(context.Context, string) (cluster.Cluster, error)
+	GetMigrationConfiguration func(metav1.GroupVersionKind, metav1.GroupVersionKind) (brokerv1alpha1.MigrationConfiguration, bool)
+}
+
+// MigrationReconcilerFunc returns a reconciler function for Migration
+// resources.
+func MigrationReconcilerFunc(opts MigrationOptions) mcreconcile.Func { //nolint:revive
+	return func(ctx context.Context, req mctrl.Request) (mctrl.Result, error) {
+		mr := &migrationReconciler{
+			opts: opts,
+			log: ctrllog.FromContext(ctx).WithValues(
+				"clusterName", req.ClusterName,
+				"name", req.Name,
+				"namespace", req.Namespace,
+			),
+			req: req,
+		}
+		return mr.reconcile(ctx)
+	}
+}
 
 const (
 	migrationStageLabel = "broker.platform-mesh.io/migration-stage"
 	migrationIDLabel    = "broker.platform-mesh.io/migration-id"
 )
 
-func (b *Broker) migrationReconciler(name string, mgr mctrl.Manager) error {
-	return mcbuilder.ControllerManagedBy(mgr).
-		Named(name + "-migration").
-		For(&brokerv1alpha1.Migration{}).
-		Complete(mcreconcile.Func(func(ctx context.Context, req mctrl.Request) (mctrl.Result, error) {
-			mr := &migrationReconciler{
-				computeClient: b.compute,
-				getCluster:    b.mgr.GetCluster,
-				getMigrationConfiguration: func(fromGVK metav1.GroupVersionKind, toGVK metav1.GroupVersionKind) (brokerv1alpha1.MigrationConfiguration, bool) {
-					b.lock.RLock()
-					defer b.lock.RUnlock()
-					toMap, ok := b.migrationConfigurations[fromGVK]
-					if !ok {
-						return brokerv1alpha1.MigrationConfiguration{}, false
-					}
-					v, ok := toMap[toGVK]
-					return v, ok
-				},
-			}
-			return mr.Reconcile(ctx, req)
-		}))
-}
-
 type migrationReconciler struct {
-	log logr.Logger
+	opts MigrationOptions
+	log  logr.Logger
+	req  mctrl.Request
 
-	computeClient             client.Client
-	getCluster                func(context.Context, string) (cluster.Cluster, error)
-	getMigrationConfiguration func(metav1.GroupVersionKind, metav1.GroupVersionKind) (brokerv1alpha1.MigrationConfiguration, bool)
-
-	req     mcreconcile.Request
 	cluster cluster.Cluster
 }
 
@@ -88,22 +86,11 @@ type migrationReconciler struct {
 // +kubebuilder:rbac:groups=broker.platform-mesh.io,resources=migrations/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=broker.platform-mesh.io,resources=migrations/finalizers,verbs=update
 
-func (mr *migrationReconciler) Reconcile(ctx context.Context, req mcreconcile.Request) (mctrl.Result, error) {
-	mr.log = ctrllog.FromContext(ctx).WithValues(
-		"clusterName", req.ClusterName,
-		"name", req.Name,
-		"namespace", req.Namespace,
-	)
+func (mr *migrationReconciler) reconcile(ctx context.Context) (mctrl.Result, error) {
 	mr.log.Info("Reconciling migration")
-	mr.req = req
-
-	if !strings.HasPrefix(mr.req.ClusterName, CoordinationPrefix) {
-		mr.log.Info("Skipping migration reconciliation for non-coordination cluster")
-		return ctrl.Result{}, nil
-	}
 
 	var err error
-	mr.cluster, err = mr.getCluster(ctx, mr.req.ClusterName)
+	mr.cluster, err = mr.opts.GetCluster(ctx, mr.req.ClusterName)
 	if err != nil {
 		mr.log.Error(err, "Failed to get cluster")
 		return ctrl.Result{}, err
@@ -141,7 +128,7 @@ func (mr *migrationReconciler) Reconcile(ctx context.Context, req mcreconcile.Re
 	}
 
 	mr.log.Info("Fetching migration configuration")
-	migrationConfig, ok := mr.getMigrationConfiguration(migration.Spec.From.GVK, migration.Spec.To.GVK)
+	migrationConfig, ok := mr.opts.GetMigrationConfiguration(migration.Spec.From.GVK, migration.Spec.To.GVK)
 	if !ok {
 		mr.log.Info("No migration configuration found for migration", "fromGVK", migration.Spec.From.GVK, "toGVK", migration.Spec.To.GVK)
 		return ctrl.Result{}, nil
@@ -202,7 +189,7 @@ func (mr *migrationReconciler) Reconcile(ctx context.Context, req mcreconcile.Re
 
 	mr.log.Info("All success conditions met for migration stage", "stage", curStage.Name)
 	for _, res := range stageResources {
-		if err := mr.computeClient.Delete(ctx, res); err != nil {
+		if err := mr.opts.Compute.Delete(ctx, res); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to clean up resource %s/%s from migration stage %s: %w", res.GetNamespace(), res.GetName(), curStage.Name, err)
 		}
 	}
@@ -257,12 +244,12 @@ func (mr *migrationReconciler) updateStatus(ctx context.Context, updateFunc func
 }
 
 func (mr *migrationReconciler) copyRelatedResources(ctx context.Context, from brokerv1alpha1.MigrationRef, prefix string) error {
-	cl, err := mr.getCluster(ctx, from.ClusterName)
+	cl, err := mr.opts.GetCluster(ctx, from.ClusterName)
 	if err != nil {
 		return err
 	}
 
-	relatedResources, err := collectRelatedResources(
+	relatedResources, err := brokerutils.CollectRelatedResources(
 		ctx,
 		cl.GetClient(),
 		schema.GroupVersionKind{
@@ -314,7 +301,7 @@ func (mr *migrationReconciler) copyRelatedResource(ctx context.Context, source c
 		return err
 	}
 
-	targetObj := StripClusterMetadata(sourceObj)
+	targetObj := brokerutils.StripClusterMetadata(sourceObj)
 	targetObj.SetName(prefix + relatedResource.Name)
 	if relatedResource.Namespace != "" {
 		targetObj.SetNamespace(relatedResource.Namespace) // TODO handle namespacing. all resources should probably be in the same namespace
@@ -322,7 +309,7 @@ func (mr *migrationReconciler) copyRelatedResource(ctx context.Context, source c
 
 	existingObj := &unstructured.Unstructured{}
 	existingObj.SetGroupVersionKind(targetObj.GroupVersionKind())
-	err := mr.computeClient.Get(
+	err := mr.opts.Compute.Get(
 		ctx,
 		types.NamespacedName{
 			Name:      targetObj.GetName(),
@@ -333,7 +320,7 @@ func (mr *migrationReconciler) copyRelatedResource(ctx context.Context, source c
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			log.Info("Creating related resource in coordination cluster")
-			if err := mr.computeClient.Create(ctx, targetObj); err != nil {
+			if err := mr.opts.Compute.Create(ctx, targetObj); err != nil {
 				log.Error(err, "Failed to create related resource in coordination cluster")
 				return err
 			}
@@ -344,7 +331,7 @@ func (mr *migrationReconciler) copyRelatedResource(ctx context.Context, source c
 	}
 
 	targetObj.SetResourceVersion(existingObj.GetResourceVersion())
-	if err := mr.computeClient.Update(ctx, targetObj); err != nil {
+	if err := mr.opts.Compute.Update(ctx, targetObj); err != nil {
 		log.Error(err, "Failed to update related resource in coordination cluster")
 		return err
 	}
@@ -373,7 +360,7 @@ func (mr *migrationReconciler) deployStage(ctx context.Context, migrationID stri
 
 		existingObj := &unstructured.Unstructured{}
 		existingObj.SetGroupVersionKind(obj.GroupVersionKind())
-		err := mr.computeClient.Get(
+		err := mr.opts.Compute.Get(
 			ctx,
 			types.NamespacedName{
 				Name:      obj.GetName(),
@@ -391,7 +378,7 @@ func (mr *migrationReconciler) deployStage(ctx context.Context, migrationID stri
 			continue
 		}
 
-		if err := mr.computeClient.Create(ctx, obj); err != nil {
+		if err := mr.opts.Compute.Create(ctx, obj); err != nil {
 			errs = errors.Join(errs, fmt.Errorf("failed to create resource from template %s: %w", name, err))
 			continue
 		}

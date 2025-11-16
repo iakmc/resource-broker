@@ -15,14 +15,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package broker
+package generic
 
 import (
 	"context"
 	"fmt"
-	"maps"
-	"slices"
-	"strings"
 
 	"github.com/go-logr/logr"
 
@@ -38,65 +35,33 @@ import (
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
 	mctrl "sigs.k8s.io/multicluster-runtime"
-	mcbuilder "sigs.k8s.io/multicluster-runtime/pkg/builder"
 	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
 
 	brokerv1alpha1 "github.com/platform-mesh/resource-broker/api/broker/v1alpha1"
+	brokerutils "github.com/platform-mesh/resource-broker/pkg/utils"
 )
 
-func (b *Broker) genericReconciler(name string, mgr mctrl.Manager, gvk schema.GroupVersionKind) error {
-	getProviders := func(gvr metav1.GroupVersionResource) map[string]map[string]*brokerv1alpha1.AcceptAPI {
-		b.lock.RLock()
-		defer b.lock.RUnlock()
-		ret := make(map[string]map[string]*brokerv1alpha1.AcceptAPI, len(b.apiAccepters[gvr]))
-		for provider, acceptors := range b.apiAccepters[gvr] {
-			cloned := make(map[string]*brokerv1alpha1.AcceptAPI, len(acceptors))
-			maps.Copy(cloned, acceptors)
-			ret[provider] = cloned
-		}
-		return ret
-	}
+// Options are the options for the generic reconciler.
+type Options struct {
+	Coordination              client.Client
+	GetProviderCluster        func(context.Context, string) (cluster.Cluster, error)
+	GetConsumerCluster        func(context.Context, string) (cluster.Cluster, error)
+	GetProviders              func(metav1.GroupVersionResource) map[string]map[string]brokerv1alpha1.AcceptAPI
+	GetProviderAcceptedAPIs   func(string, metav1.GroupVersionResource) ([]brokerv1alpha1.AcceptAPI, error)
+	GetMigrationConfiguration func(metav1.GroupVersionKind, metav1.GroupVersionKind) (brokerv1alpha1.MigrationConfiguration, bool)
+}
 
-	getProviderAcceptedAPIs := func(providerName string, gvr metav1.GroupVersionResource) ([]*brokerv1alpha1.AcceptAPI, error) {
-		b.lock.RLock()
-		defer b.lock.RUnlock()
-		acceptAPIs, ok := b.apiAccepters[gvr][providerName]
-		if !ok {
-			return nil, fmt.Errorf("provider %q does not accept %q", providerName, gvr)
+// ReconcileFunc returns a reconciler function for generic resources.
+func ReconcileFunc(opts Options, gvk schema.GroupVersionKind) mcreconcile.Func {
+	return func(ctx context.Context, req mctrl.Request) (mctrl.Result, error) {
+		gr := &genericReconciler{
+			opts: opts,
+			log:  ctrllog.FromContext(ctx).WithValues("clusterName", req.ClusterName),
+			gvk:  gvk,
+			req:  req,
 		}
-		return slices.Collect(maps.Values(acceptAPIs)), nil
+		return gr.reconcile(ctx)
 	}
-
-	getMigrationConfiguration := func(fromGVK metav1.GroupVersionKind, toGVK metav1.GroupVersionKind) (brokerv1alpha1.MigrationConfiguration, bool) {
-		b.lock.RLock()
-		defer b.lock.RUnlock()
-		toMap, ok := b.migrationConfigurations[fromGVK]
-		if !ok {
-			return brokerv1alpha1.MigrationConfiguration{}, false
-		}
-		v, ok := toMap[toGVK]
-		return v, ok
-	}
-
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(gvk)
-	return mcbuilder.ControllerManagedBy(mgr).
-		Named(name + "-generic-" + gvk.String()).
-		For(obj).
-		Complete(mcreconcile.Func(func(ctx context.Context, req mcreconcile.Request) (mctrl.Result, error) {
-			gr := &genericReconciler{
-				log:                       ctrllog.FromContext(ctx).WithValues("clusterName", req.ClusterName),
-				gvk:                       gvk,
-				req:                       req,
-				coordination:              b.coordination,
-				compute:                   b.compute,
-				getCluster:                b.mgr.GetCluster,
-				getProviders:              getProviders,
-				getProviderAcceptedAPIs:   getProviderAcceptedAPIs,
-				getMigrationConfiguration: getMigrationConfiguration,
-			}
-			return gr.reconcile(ctx)
-		}))
 }
 
 const (
@@ -107,16 +72,10 @@ const (
 )
 
 type genericReconciler struct {
-	log logr.Logger
-	gvk schema.GroupVersionKind
-	req mcreconcile.Request
-
-	coordination, compute client.Client
-
-	getCluster                func(context.Context, string) (cluster.Cluster, error)
-	getProviders              func(metav1.GroupVersionResource) map[string]map[string]*brokerv1alpha1.AcceptAPI
-	getProviderAcceptedAPIs   func(string, metav1.GroupVersionResource) ([]*brokerv1alpha1.AcceptAPI, error)
-	getMigrationConfiguration func(metav1.GroupVersionKind, metav1.GroupVersionKind) (brokerv1alpha1.MigrationConfiguration, bool)
+	opts Options
+	log  logr.Logger
+	gvk  schema.GroupVersionKind
+	req  mctrl.Request
 
 	consumerName       string
 	consumerCluster    cluster.Cluster
@@ -251,7 +210,7 @@ func (gr *genericReconciler) reconcile(ctx context.Context) (mctrl.Result, error
 }
 
 func (gr *genericReconciler) getPossibleProvider(obj *unstructured.Unstructured) (string, error) {
-	possibleProviders := gr.getProviders(gr.gvr)
+	possibleProviders := gr.opts.GetProviders(gr.gvr)
 	if len(possibleProviders) == 0 {
 		return "", fmt.Errorf("no clusters accept GVR %v", gr.gvr)
 	}
@@ -291,19 +250,27 @@ func (gr *genericReconciler) getNewProviderName(obj *unstructured.Unstructured) 
 }
 
 func (gr *genericReconciler) determineClusters(ctx context.Context) (bool, error) {
-	switch {
-	case strings.HasPrefix(gr.req.ClusterName, ConsumerPrefix):
+	// This made more sense before the logic was moved into its own
+	// package. Should refactor this when time permits.
+
+	if _, err := gr.opts.GetConsumerCluster(ctx, gr.req.ClusterName); err == nil {
 		// Request comes from consumer cluster
 		if err := gr.setConsumerCluster(ctx, gr.req.ClusterName); err != nil {
+			gr.log.Error(err, "Failed to set consumer cluster")
 			return false, err
 		}
-	case strings.HasPrefix(gr.req.ClusterName, ProviderPrefix):
+	}
+
+	if _, err := gr.opts.GetProviderCluster(ctx, gr.req.ClusterName); err == nil {
 		// Request comes from provider cluster
 		if err := gr.setProviderCluster(ctx, gr.req.ClusterName); err != nil {
+			gr.log.Error(err, "Failed to set provider cluster")
 			return false, err
 		}
-	default:
-		gr.log.Info("Request cluster name does not have consumer or provider prefix, skipping")
+	}
+
+	if gr.consumerName == "" && gr.providerName == "" {
+		gr.log.Info("Request does not come from known consumer or provider cluster, skipping")
 		return false, nil
 	}
 
@@ -370,11 +337,11 @@ func (gr *genericReconciler) determineClusters(ctx context.Context) (bool, error
 
 func (gr *genericReconciler) setConsumerCluster(ctx context.Context, name string) error {
 	gr.log.Info("Setting consumer cluster", "consumer", name)
-	gr.consumerName = name
-	cl, err := gr.getCluster(ctx, gr.consumerName)
+	cl, err := gr.opts.GetConsumerCluster(ctx, name)
 	if err != nil {
-		return fmt.Errorf("failed to get consumer cluster %q: %w", gr.consumerName, err)
+		return fmt.Errorf("failed to get consumer cluster %q: %w", name, err)
 	}
+	gr.consumerName = name
 	gr.consumerCluster = cl
 	return nil
 }
@@ -402,11 +369,11 @@ func (gr *genericReconciler) setConsumerClusterFromProvider(ctx context.Context)
 
 func (gr *genericReconciler) setProviderCluster(ctx context.Context, name string) error {
 	gr.log.Info("Setting provider cluster", "provider", name)
-	gr.providerName = name
-	cl, err := gr.getCluster(ctx, gr.providerName)
+	cl, err := gr.opts.GetProviderCluster(ctx, name)
 	if err != nil {
-		return fmt.Errorf("failed to get provider cluster %q: %w", gr.providerName, err)
+		return fmt.Errorf("failed to get provider cluster %q: %w", name, err)
 	}
+	gr.providerName = name
 	gr.providerCluster = cl
 	return nil
 }
@@ -570,7 +537,7 @@ func (gr *genericReconciler) newProvider(ctx context.Context, consumerObj *unstr
 
 	gr.log.Info("Determined new provider cluster", "newProvider", gr.newProviderName)
 
-	gr.newProviderCluster, err = gr.getCluster(ctx, gr.newProviderName)
+	gr.newProviderCluster, err = gr.opts.GetProviderCluster(ctx, gr.newProviderName)
 	if err != nil {
 		return fmt.Errorf("failed to get new provider cluster %q: %w", gr.newProviderName, err)
 	}
@@ -579,7 +546,7 @@ func (gr *genericReconciler) newProvider(ctx context.Context, consumerObj *unstr
 	if err != nil {
 		return fmt.Errorf("failed to get resource from consumer cluster %q: %w", gr.consumerName, err)
 	}
-	setAnnotation(consumerObj, newProviderClusterAnn, gr.newProviderName)
+	brokerutils.SetAnnotation(consumerObj, newProviderClusterAnn, gr.newProviderName)
 	if err := gr.consumerCluster.GetClient().Update(ctx, consumerObj); err != nil {
 		return fmt.Errorf("failed to set new provider cluster annotation in consumer: %w", err)
 	}
@@ -605,14 +572,14 @@ func (gr *genericReconciler) migrate(ctx context.Context, consumerObj *unstructu
 		Version: gr.gvk.Version,
 		Kind:    gr.gvk.Kind,
 	}
-	migrationConfig, found := gr.getMigrationConfiguration(from, to)
+	migrationConfig, found := gr.opts.GetMigrationConfiguration(from, to)
 	if !found {
 		gr.log.Info("No migration configuration found, continuing", "from", from, "to", to)
 		return true, brokerv1alpha1.MigrationStateCutoverCompleted, nil
 	}
 
 	migration := &brokerv1alpha1.Migration{}
-	err := gr.coordination.Get(
+	err := gr.opts.Coordination.Get(
 		ctx,
 		types.NamespacedName{
 			Name:      consumerObj.GetName(),
@@ -652,7 +619,7 @@ func (gr *genericReconciler) migrate(ctx context.Context, consumerObj *unstructu
 	}
 
 	gr.log.Info("Creating migration config in coordination cluster")
-	if err := gr.coordination.Create(ctx, migration); err != nil {
+	if err := gr.opts.Coordination.Create(ctx, migration); err != nil {
 		return false, brokerv1alpha1.MigrationStateUnknown, fmt.Errorf("failed to create Migration resource in coordination cluster: %w", err)
 	}
 
@@ -674,7 +641,7 @@ func (gr *genericReconciler) decorateInProvider(ctx context.Context, providerNam
 		}
 	}
 
-	setAnnotation(obj, consumerClusterAnn, gr.consumerName)
+	brokerutils.SetAnnotation(obj, consumerClusterAnn, gr.consumerName)
 	if err := providerCluster.GetClient().Update(ctx, obj); err != nil {
 		return fmt.Errorf("failed to set annotations in provider: %w", err)
 	}
@@ -687,7 +654,7 @@ func (gr *genericReconciler) providerAcceptsObj(ctx context.Context) (bool, erro
 		return false, fmt.Errorf("failed to get resource from consumer cluster %q: %w", gr.consumerName, err)
 	}
 
-	acceptAPIs, err := gr.getProviderAcceptedAPIs(gr.providerName, gr.gvr)
+	acceptAPIs, err := gr.opts.GetProviderAcceptedAPIs(gr.providerName, gr.gvr)
 	if err != nil {
 		return false, err
 	}
@@ -708,7 +675,7 @@ func (gr *genericReconciler) syncResource(ctx context.Context, providerName stri
 	// TODO send conditions back to consumer cluster
 	// TODO there should be two informers triggering this - one
 	// for consumer and one for provider
-	if cond, err := CopyResource(
+	if cond, err := brokerutils.CopyResource(
 		ctx,
 		gr.gvk,
 		gr.req.NamespacedName,
@@ -746,7 +713,7 @@ func (gr *genericReconciler) syncRelatedResources(ctx context.Context, providerN
 	// TODO handle resource drift when a related resource is removed in
 	// the provider it needs to be removed in the consumer
 	// maybe just a finalizer on the resources in the provider?
-	relatedResources, err := collectRelatedResources(ctx, providerCluster.GetClient(), gr.gvk, gr.req.NamespacedName)
+	relatedResources, err := brokerutils.CollectRelatedResources(ctx, providerCluster.GetClient(), gr.gvk, gr.req.NamespacedName)
 	if err != nil {
 		return fmt.Errorf("failed to collect related resources from provider cluster %q: %w", providerName, err)
 	}
@@ -787,7 +754,7 @@ func (gr *genericReconciler) syncRelatedResource(ctx context.Context, providerCl
 	}
 
 	// TODO conditions
-	_, err := CopyResource(
+	_, err := brokerutils.CopyResource(
 		ctx,
 		relatedResource.SchemaGVK(),
 		types.NamespacedName{

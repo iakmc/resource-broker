@@ -15,7 +15,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package broker
+package utils
 
 // ConditionType is a discrete, strongly-typed alias for metav1.Condition.Type
 // values used within this package. Defining a concrete type and named

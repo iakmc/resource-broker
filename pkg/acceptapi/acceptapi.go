@@ -15,28 +15,48 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package broker
+package acceptapi
 
 import (
 	"context"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"github.com/go-logr/logr"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	ctrlutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
 	mctrl "sigs.k8s.io/multicluster-runtime"
-	mcbuilder "sigs.k8s.io/multicluster-runtime/pkg/builder"
 	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
 
 	brokerv1alpha1 "github.com/platform-mesh/resource-broker/api/broker/v1alpha1"
 )
 
-func (b *Broker) acceptAPIReconciler(name string, mgr mctrl.Manager) error {
-	return mcbuilder.ControllerManagedBy(mgr).
-		Named(name + "-acceptapi").
-		For(&brokerv1alpha1.AcceptAPI{}).
-		Complete(mcreconcile.Func(b.acceptAPIReconcile))
+// Options defines the options for the AcceptAPI reconciler.
+type Options struct {
+	GetCluster      func(context.Context, string) (cluster.Cluster, error)
+	SetAcceptAPI    func(metav1.GroupVersionResource, string, brokerv1alpha1.AcceptAPI)
+	DeleteAcceptAPI func(metav1.GroupVersionResource, string, string)
+}
+
+// ReconcilerFunc returns a new reconciler function to handle AcceptAPI
+// resources.
+func ReconcilerFunc(opts Options) mcreconcile.Func {
+	return func(ctx context.Context, req mctrl.Request) (mctrl.Result, error) {
+		r := &reconciler{
+			opts: opts,
+			log: ctrllog.FromContext(ctx).WithValues(
+				"clusterName", req.ClusterName,
+				"name", req.Name,
+				"namespace", req.Namespace,
+			),
+			req: req,
+		}
+		return r.reconcile(ctx)
+	}
 }
 
 // +kubebuilder:rbac:groups=broker.platform-mesh.io,resources=acceptapis,verbs=get;list;watch;create;update;patch;delete
@@ -45,17 +65,24 @@ func (b *Broker) acceptAPIReconciler(name string, mgr mctrl.Manager) error {
 
 const acceptAPIFinalizer = "broker.platform-mesh.io/acceptapi-finalizer"
 
-func (b *Broker) acceptAPIReconcile(ctx context.Context, req mctrl.Request) (mctrl.Result, error) {
-	log := ctrllog.FromContext(ctx).WithValues("cluster", req.ClusterName)
-	log.Info("Reconciling AcceptAPI")
+type reconciler struct {
+	opts Options
+	log  logr.Logger
+	req  mctrl.Request
+}
 
-	cl, err := b.mgr.GetCluster(ctx, req.ClusterName)
+func (r *reconciler) reconcile(ctx context.Context) (mctrl.Result, error) {
+	r.log.Info("Reconciling AcceptAPI")
+
+	// TODO Would be better as a handler off of an informer
+
+	cl, err := r.opts.GetCluster(ctx, r.req.ClusterName)
 	if err != nil {
 		return mctrl.Result{}, err
 	}
 
 	acceptAPI := &brokerv1alpha1.AcceptAPI{}
-	if err := cl.GetClient().Get(ctx, req.NamespacedName, acceptAPI); err != nil {
+	if err := cl.GetClient().Get(ctx, r.req.NamespacedName, acceptAPI); err != nil {
 		if apierrors.IsNotFound(err) {
 			return mctrl.Result{}, nil
 		}
@@ -65,17 +92,8 @@ func (b *Broker) acceptAPIReconcile(ctx context.Context, req mctrl.Request) (mct
 	gvr := acceptAPI.Spec.GVR
 
 	if !acceptAPI.DeletionTimestamp.IsZero() {
-		log.Info("AcceptAPI is being deleted, removing from apiAccepters map")
-
-		b.lock.Lock()
-		clusterAcceptedAPIs, ok := b.apiAccepters[gvr][req.ClusterName]
-		if ok {
-			delete(clusterAcceptedAPIs, acceptAPI.Name)
-			if len(clusterAcceptedAPIs) == 0 {
-				delete(b.apiAccepters[gvr], req.ClusterName)
-			}
-		}
-		b.lock.Unlock()
+		r.log.Info("AcceptAPI is being deleted, removing from apiAccepters map")
+		r.opts.DeleteAcceptAPI(gvr, r.req.ClusterName, acceptAPI.Name)
 
 		if ctrlutil.RemoveFinalizer(acceptAPI, acceptAPIFinalizer) {
 			if err := cl.GetClient().Update(ctx, acceptAPI); err != nil {
@@ -92,16 +110,7 @@ func (b *Broker) acceptAPIReconcile(ctx context.Context, req mctrl.Request) (mct
 		}
 	}
 
-	b.lock.Lock()
-	if _, ok := b.apiAccepters[gvr]; !ok {
-		b.apiAccepters[gvr] = make(map[string]map[string]*brokerv1alpha1.AcceptAPI)
-	}
-	if _, ok := b.apiAccepters[gvr][req.ClusterName]; !ok {
-		b.apiAccepters[gvr][req.ClusterName] = make(map[string]*brokerv1alpha1.AcceptAPI)
-	}
-	b.apiAccepters[gvr][req.ClusterName][acceptAPI.Name] = acceptAPI
-	b.lock.Unlock()
-
-	log.Info("Cluster already present in apiAccepters map for GVR", "gvr", gvr)
+	r.opts.SetAcceptAPI(gvr, r.req.ClusterName, *acceptAPI)
+	r.log.Info("Cluster already present in apiAccepters map for GVR", "gvr", gvr)
 	return mctrl.Result{}, nil
 }
