@@ -48,7 +48,8 @@ import (
 // MigrationOptions holds the options for the migration reconciler.
 type MigrationOptions struct { //nolint:revive
 	Compute                   client.Client
-	GetCluster                func(context.Context, string) (cluster.Cluster, error)
+	GetCoordinationCluster    func(context.Context, string) (cluster.Cluster, error)
+	GetProviderCluster        func(context.Context, string) (cluster.Cluster, error)
 	GetMigrationConfiguration func(metav1.GroupVersionKind, metav1.GroupVersionKind) (brokerv1alpha1.MigrationConfiguration, bool)
 }
 
@@ -90,7 +91,7 @@ func (mr *migrationReconciler) reconcile(ctx context.Context) (mctrl.Result, err
 	mr.log.Info("Reconciling migration")
 
 	var err error
-	mr.cluster, err = mr.opts.GetCluster(ctx, mr.req.ClusterName)
+	mr.cluster, err = mr.opts.GetCoordinationCluster(ctx, mr.req.ClusterName)
 	if err != nil {
 		mr.log.Error(err, "Failed to get cluster")
 		return ctrl.Result{}, err
@@ -244,7 +245,7 @@ func (mr *migrationReconciler) updateStatus(ctx context.Context, updateFunc func
 }
 
 func (mr *migrationReconciler) copyRelatedResources(ctx context.Context, from brokerv1alpha1.MigrationRef, prefix string) error {
-	cl, err := mr.opts.GetCluster(ctx, from.ClusterName)
+	cl, err := mr.opts.GetProviderCluster(ctx, from.ClusterName)
 	if err != nil {
 		return err
 	}
