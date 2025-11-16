@@ -15,17 +15,5 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package broker
-
-import (
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-)
-
-func setAnnotation(obj *unstructured.Unstructured, key, value string) {
-	anns := obj.GetAnnotations()
-	if anns == nil {
-		anns = make(map[string]string)
-	}
-	anns[key] = value
-	obj.SetAnnotations(anns)
-}
+// Package acceptapi provides a reconciler for AcceptAPI resources.
+package acceptapi

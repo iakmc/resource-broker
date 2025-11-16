@@ -15,7 +15,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package broker
+package utils
 
 import (
 	"context"
@@ -31,7 +31,9 @@ import (
 	brokerv1alpha1 "github.com/platform-mesh/resource-broker/api/broker/v1alpha1"
 )
 
-func collectRelatedResources(ctx context.Context, providerClient client.Client, gvk schema.GroupVersionKind, namespacedName types.NamespacedName) (map[string]brokerv1alpha1.RelatedResource, error) {
+// CollectRelatedResources retrieves the related resources from the
+// status of a provider resource.
+func CollectRelatedResources(ctx context.Context, providerClient client.Client, gvk schema.GroupVersionKind, namespacedName types.NamespacedName) (map[string]brokerv1alpha1.RelatedResource, error) {
 	providerObj := &unstructured.Unstructured{}
 	providerObj.SetGroupVersionKind(gvk)
 	if err := providerClient.Get(ctx, namespacedName, providerObj); err != nil {

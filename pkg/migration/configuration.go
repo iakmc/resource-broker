@@ -15,29 +15,49 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package broker
+package migration
 
 import (
 	"context"
 
+	"github.com/go-logr/logr"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	ctrlutil "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
 	mctrl "sigs.k8s.io/multicluster-runtime"
-	mcbuilder "sigs.k8s.io/multicluster-runtime/pkg/builder"
 	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
 
 	brokerv1alpha1 "github.com/platform-mesh/resource-broker/api/broker/v1alpha1"
 )
 
-func (b *Broker) migrationConfigurationReconciler(name string, mgr mctrl.Manager) error {
-	return mcbuilder.ControllerManagedBy(mgr).
-		Named(name + "-migrationconfiguration").
-		For(&brokerv1alpha1.MigrationConfiguration{}).
-		Complete(mcreconcile.Func(b.migrationConfigurationReconcile))
+// ConfigurationOptions defines the options for the
+// MigrationConfiguration reconciler.
+type ConfigurationOptions struct {
+	GetCluster                   func(context.Context, string) (cluster.Cluster, error)
+	SetMigrationConfiguration    func(from metav1.GroupVersionKind, to metav1.GroupVersionKind, config brokerv1alpha1.MigrationConfiguration)
+	DeleteMigrationConfiguration func(from metav1.GroupVersionKind, to metav1.GroupVersionKind)
+}
+
+// ConfigurationReconcilerFunc returns a new reconciler function to
+// handle MigrationConfiguration resources.
+func ConfigurationReconcilerFunc(opts ConfigurationOptions) mcreconcile.Func {
+	return func(ctx context.Context, req mctrl.Request) (mctrl.Result, error) {
+		mr := &configurationReconciler{
+			opts: opts,
+			log: ctrllog.FromContext(ctx).WithValues(
+				"clusterName", req.ClusterName,
+				"name", req.Name,
+				"namespace", req.Namespace,
+			),
+			req: req,
+		}
+		return mr.reconcile(ctx)
+	}
 }
 
 // +kubebuilder:rbac:groups=broker.platform-mesh.io,resources=migrationconfigurations,verbs=get;list;watch;create;update;patch;delete
@@ -46,21 +66,25 @@ func (b *Broker) migrationConfigurationReconciler(name string, mgr mctrl.Manager
 
 const migrationConfigurationFinalizer = "broker.platform-mesh.io/migrationconfiguration-finalizer"
 
-func (b *Broker) migrationConfigurationReconcile(ctx context.Context, req mctrl.Request) (mctrl.Result, error) {
-	log := ctrllog.FromContext(ctx).WithValues(
-		"cluster", req.ClusterName,
-		"name", req.Name,
-		"namespace", req.Namespace,
-	)
-	log.Info("Reconciling MigrationConfiguration")
+type configurationReconciler struct {
+	opts ConfigurationOptions
+	log  logr.Logger
+	req  mctrl.Request
+}
 
-	cl, err := b.mgr.GetCluster(ctx, req.ClusterName)
+func (cr *configurationReconciler) reconcile(ctx context.Context) (mctrl.Result, error) {
+	cr.log.Info("Reconciling MigrationConfiguration")
+
+	// TODO: This would probably be better as a handler that can be
+	// attached to an indexer.
+
+	cl, err := cr.opts.GetCluster(ctx, cr.req.ClusterName)
 	if err != nil {
 		return mctrl.Result{}, err
 	}
 
 	migrationConfiguration := &brokerv1alpha1.MigrationConfiguration{}
-	if err := cl.GetClient().Get(ctx, req.NamespacedName, migrationConfiguration); err != nil {
+	if err := cl.GetClient().Get(ctx, cr.req.NamespacedName, migrationConfiguration); err != nil {
 		if apierrors.IsNotFound(err) {
 			return mctrl.Result{}, nil
 		}
@@ -68,12 +92,10 @@ func (b *Broker) migrationConfigurationReconcile(ctx context.Context, req mctrl.
 	}
 
 	if !migrationConfiguration.DeletionTimestamp.IsZero() {
-		b.lock.Lock()
-		delete(b.migrationConfigurations[migrationConfiguration.Spec.From], migrationConfiguration.Spec.To)
-		if len(b.migrationConfigurations[migrationConfiguration.Spec.From]) == 0 {
-			delete(b.migrationConfigurations, migrationConfiguration.Spec.From)
-		}
-		b.lock.Unlock()
+		cr.opts.DeleteMigrationConfiguration(
+			migrationConfiguration.Spec.From,
+			migrationConfiguration.Spec.To,
+		)
 		if ctrlutil.ContainsFinalizer(migrationConfiguration, migrationConfigurationFinalizer) {
 			ctrlutil.RemoveFinalizer(migrationConfiguration, migrationConfigurationFinalizer)
 			if err := cl.GetClient().Update(ctx, migrationConfiguration); err != nil {
@@ -83,12 +105,11 @@ func (b *Broker) migrationConfigurationReconcile(ctx context.Context, req mctrl.
 		return mctrl.Result{}, nil
 	}
 
-	b.lock.Lock()
-	if _, ok := b.migrationConfigurations[migrationConfiguration.Spec.From]; !ok {
-		b.migrationConfigurations[migrationConfiguration.Spec.From] = make(map[metav1.GroupVersionKind]brokerv1alpha1.MigrationConfiguration)
-	}
-	b.migrationConfigurations[migrationConfiguration.Spec.From][migrationConfiguration.Spec.To] = *migrationConfiguration
-	b.lock.Unlock()
+	cr.opts.SetMigrationConfiguration(
+		migrationConfiguration.Spec.From,
+		migrationConfiguration.Spec.To,
+		*migrationConfiguration,
+	)
 
 	if !ctrlutil.ContainsFinalizer(migrationConfiguration, migrationConfigurationFinalizer) {
 		ctrlutil.AddFinalizer(migrationConfiguration, migrationConfigurationFinalizer)

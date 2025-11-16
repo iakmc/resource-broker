@@ -41,6 +41,7 @@ import (
 	"sigs.k8s.io/multicluster-runtime/providers/multi"
 	"sigs.k8s.io/multicluster-runtime/providers/single"
 
+	brokerv1alpha1 "github.com/platform-mesh/resource-broker/api/broker/v1alpha1"
 	examplev1alpha1 "github.com/platform-mesh/resource-broker/api/example/v1alpha1"
 	"github.com/platform-mesh/resource-broker/cmd/manager"
 	"github.com/platform-mesh/resource-broker/test/utils"
@@ -48,7 +49,9 @@ import (
 
 func init() {
 	log.SetLogger(zap.New(zap.UseDevMode(true)))
+	// TODO manage schemes properly
 	runtime.Must(examplev1alpha1.AddToScheme(scheme.Scheme))
+	runtime.Must(brokerv1alpha1.AddToScheme(scheme.Scheme))
 }
 
 // ManagerOptions returns the default manager options for tests.
