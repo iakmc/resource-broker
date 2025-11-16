@@ -653,7 +653,7 @@ func (gr *genericReconciler) migrate(ctx context.Context, consumerObj *unstructu
 
 	gr.log.Info("Creating migration config in coordination cluster")
 	if err := gr.coordination.Create(ctx, migration); err != nil {
-		return false, brokerv1alpha1.MigrationStateUnknown, fmt.Errorf("failed to create Migration resource in consumer cluster %q: %w", gr.consumerName, err)
+		return false, brokerv1alpha1.MigrationStateUnknown, fmt.Errorf("failed to create Migration resource in coordination cluster: %w", err)
 	}
 
 	// Created migration, wait for next reconciliation to continue.
