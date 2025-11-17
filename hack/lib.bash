@@ -1,0 +1,384 @@
+timeout="10m"
+
+log() { echo ">>> $@"; }
+die() { echo "!!! $@" >&2; exit 1; }
+
+kind::cluster() {
+    local name="broker-$1"
+    local kubeconfig="$2"
+    rm -f "$kubeconfig"
+    if ! kind get clusters | grep -q "^$name$"; then
+        kind create cluster --name "$name" --kubeconfig "$kubeconfig" \
+            || die "Failed to create cluster $name"
+    else
+        kind export kubeconfig --name "$name" --kubeconfig "$kubeconfig" \
+            || die "Failed to export kubeconfig for cluster $name"
+    fi
+}
+
+kubectl::apply::one() {
+    local kubeconfig="$1"
+    local resource="$2"
+    local try_count=0
+    local max_retries=30
+
+    while [[ "$try_count" -lt "$max_retries" ]]; do
+        if kubectl --kubeconfig "$kubeconfig" apply -f "$resource"
+        then
+            return
+        else
+            try_count=$((try_count + 1))
+            log "kubectl apply failed, retrying ($try_count/$max_retries)..."
+            sleep 2
+        fi
+    done
+
+    die "Failed to apply $* to cluster with kubeconfig $kubeconfig after $max_retries attempts"
+}
+
+kubectl::apply() {
+    local kubeconfig="$1"
+    shift 1
+    for resource in "$@"; do
+        kubectl::apply::one "$kubeconfig" "$resource"
+    done
+}
+
+kubectl::kustomize() {
+    local kubeconfig="$1"
+    local kustomize_dir="$2"
+    local try_count=0
+    local max_retries=30
+
+    while [[ "$try_count" -lt "$max_retries" ]]; do
+        # --server-side is for cnpg operator
+        if kubectl --kubeconfig "$kubeconfig" kustomize --load-restrictor=LoadRestrictionsNone "$kustomize_dir" \
+                | kubectl --kubeconfig "$kubeconfig" apply -f- --server-side
+        then
+            return
+        else
+            try_count=$((try_count + 1))
+            log "kustomize apply failed, retrying ($try_count/$max_retries)..."
+            sleep 2
+        fi
+    done
+
+    die "Failed to kustomize apply $kustomize_dir to cluster with kubeconfig $kubeconfig after $max_retries attempts"
+}
+
+helm::repo() {
+    local name="$1"
+    local url="$2"
+    helm repo add "$name" "$url" || die "Failed to add helm repo $name with url $url"
+    helm repo update "$name" || die "Failed to update helm repo $name"
+}
+
+helm::install() {
+    local kubeconfig="$1"
+    local release_name="$2"
+    local chart_path="$3"
+    shift 3
+
+    KUBECONFIG="$kubeconfig" \
+        helm upgrade --install \
+        --create-namespace \
+        "$release_name" \
+        "$chart_path" \
+        "$@" || die "Failed to install helm chart $chart_path as release $release_name"
+}
+
+helm::install::certmanager() {
+    local kubeconfig="$1"
+    shift 1
+    helm::install "$kubeconfig" \
+        cert-manager oci://quay.io/jetstack/charts/cert-manager:v1.19.1 \
+          --set crds.enabled=true \
+          "$@"
+}
+
+helm::install::etcd() {
+    local kubeconfig="$1"
+    shift 1
+    helm::install "$kubeconfig" \
+        etcd oci://registry-1.docker.io/bitnamicharts/etcd \
+        --set auth.rbac.enabled=false --set auth.rbac.create=false \
+        "$@"
+}
+
+helm::install::etcddruid() {
+    local kubeconfig="$1"
+    shift 1
+    local version="v0.33.0"
+    kubectl::apply "$kubeconfig" \
+        "https://raw.githubusercontent.com/gardener/etcd-druid/refs/tags/${version}/api/core/v1alpha1/crds/druid.gardener.cloud_etcds_without_cel.yaml"
+    kubectl::apply "$kubeconfig" \
+        "https://raw.githubusercontent.com/gardener/etcd-druid/refs/tags/${version}/api/core/v1alpha1/crds/druid.gardener.cloud_etcdcopybackupstasks.yaml"
+    helm::install "$kubeconfig" \
+        etcd-druid "oci://europe-docker.pkg.dev/gardener-project/releases/charts/gardener/etcd-druid:${version}" \
+        "$@"
+}
+
+helm::install::kcp() {
+    local kubeconfig="$1"
+    shift 1
+    helm::repo kcp  https://kcp-dev.github.io/helm-charts
+    helm::install "$kubeconfig" \
+        kcp-operator kcp/kcp-operator \
+        "$@"
+}
+
+kubeconfig::hostname() {
+    local kubeconfig="$1"
+    local hostname="$(yq '.clusters[0].cluster.server' "$kubeconfig")"
+    [[ -z "$hostname" ]] && die "Failed to get server from kubeconfig $kubeconfig"
+    hostname="${hostname#http://}"
+    hostname="${hostname#https://}"
+    echo "${hostname%%/*}"
+}
+
+kubeconfig::hostname::set() {
+    local kubeconfig="$1"
+    local old_hostname="$2"
+    local new_hostname="$3"
+    yq -i ".clusters[].cluster.server |= sub(\"$old_hostname\"; \"$new_hostname\")" "$kubeconfig"
+}
+
+docker::local_port() {
+    local container_name="$1"
+    local container_port="$2"
+    docker port "$container_name" "$container_port" | cut -d' ' -f3
+}
+
+kcp::setup::kubeconfigs() {
+    local kind_kubeconfig="$1"
+    local kcp_kubeconfig="$2"
+    local kcp_host_kubeconfig="$3"
+
+    KUBECONFIG="$kind_kubeconfig" \
+        kubectl wait --for=create secret/admin-kubeconfig \
+            --timeout="$timeout" \
+            || die "Timed out waiting for admin-kubeconfig secret in kind cluster"
+
+    KUBECONFIG="$kind_kubeconfig" \
+        kubectl get secret admin-kubeconfig -o jsonpath='{.data.kubeconfig}' \
+        | base64 -d \
+        > "$kcp_kubeconfig" \
+        || die "Failed to get admin kubeconfig from kind cluster"
+
+    # Replace the port with the node port from the service
+    yq -i ".clusters[].cluster.server |= sub(\":6443\"; \":8443\")" "$kcp_kubeconfig"
+
+    # Create port forward to access kcp from host
+    kcp::front_proxy_forward "$kind_kubeconfig" "8443"
+    cp "$kcp_kubeconfig" "$kcp_host_kubeconfig"
+    local hostname="$(kubectl --kubeconfig "$kind_kubeconfig" get rootshards.operator.kcp.io root -o jsonpath='{.spec.external.hostname}')"
+    kubeconfig::hostname::set "$kcp_host_kubeconfig" "$hostname:443" "127.0.0.1:8443"
+}
+
+# kcp::front_proxy_port() {
+#     local kubeconfig="$1"
+#     KUBECONFIG="$kubeconfig" \
+#         kubectl get svc frontproxy-front-proxy -o jsonpath='{.spec.ports[?(@.name=="https")].nodePort}' \
+#         || die "Failed to get front proxy port"
+# }
+
+kcp::front_proxy_forward() {
+    local kubeconfig="$1"
+    local port="$2"
+    KUBECONFIG="$kubeconfig" \
+        kubectl wait --for=condition=Available=True deployment/frontproxy-front-proxy \
+            --timeout="$timeout" \
+            || die "front proxy is not available"
+    KUBECONFIG="$kubeconfig" \
+        kubectl port-forward svc/frontproxy-front-proxy "$port:6443" 2>/dev/null >/dev/null &
+}
+
+kcp::create_workspace() {
+    local parent_kubeconfig="$1"
+    [[ -z "$parent_kubeconfig" ]] && die "parent_kubeconfig is required"
+    local target_kubeconfig="$2"
+    [[ -z "$target_kubeconfig" ]] && die "target_kubeconfig is required"
+    local wsname="$3"
+    [[ -z "$wsname" ]] && die "wsname is required"
+
+    local current_server="$(kubeconfig::hostname "$parent_kubeconfig")"
+    local local_server="127.0.0.1:8443"
+
+    cp "$parent_kubeconfig" "$target_kubeconfig" \
+        || die "Failed to copy kubeconfig from $parent_kubeconfig to $target_kubeconfig"
+    kubeconfig::hostname::set "$target_kubeconfig" "$current_server" "$local_server"
+    local check_kubeconfig="$target_kubeconfig.check"
+    cp "$target_kubeconfig" "$check_kubeconfig"
+
+    while ! KUBECONFIG="$target_kubeconfig" kubectl get workspacetype universal &>/dev/null; do
+        log "WorkspaceType universal not found yet, retrying..."
+        sleep 2
+    done
+    KUBECONFIG="$target_kubeconfig" \
+        kubectl wait --timeout="$timeout" \
+            --for=condition=Ready=True \
+            workspacetypes universal \
+            || die "Timed out waiting for workspacetype universal to become Ready"
+
+    log "Creating workspace $wsname"
+    KUBECONFIG="$target_kubeconfig" \
+        kubectl create-workspace "$wsname" --enter --ignore-existing \
+        || die "Failed to create workspace $wsname"
+
+    log "Waiting for workspace $wsname to become Ready"
+    while ! KUBECONFIG="$check_kubeconfig" kubectl get workspace "$wsname" &>/dev/null; do
+        log "Workspace $wsname not found yet, retrying..."
+        sleep 2
+    done
+    KUBECONFIG="$check_kubeconfig" \
+        kubectl wait --for=jsonpath='{.status.phase}="Ready"' \
+            workspace "$wsname" --timeout="$timeout" \
+            || die "Timed out waiting for workspace $wsname to become Ready"
+    rm -f "$check_kubeconfig"
+}
+
+kcp::apiexport() {
+    local kubeconfig="$1"
+    local crd_file="$2"
+    shift 2
+
+    kubectl kcp crd snapshot \
+        --filename "$crd_file" \
+        --prefix current \
+        | KUBECONFIG="$kubeconfig" kubectl apply -f -
+
+    local group="$(yq '.spec.group' "$crd_file")"
+    local export_name="$(yq '.spec.names.plural' "$crd_file")"
+
+    {
+        echo "apiVersion: apis.kcp.io/v1alpha2"
+        echo "kind: APIExport"
+        echo "metadata:"
+        echo "  name: $export_name"
+        echo "spec:"
+        echo "  resources:"
+        echo "    - group: $group"
+        echo "      name: $export_name"
+        echo "      schema: current.${export_name}.${group}"
+        if [[ "$#" -gt 0 ]]; then
+            echo "  permissionClaims:"
+        fi
+        while [[ "$#" -gt 0 ]]; do
+            local resource="$1"
+            local verbs="$2"
+            shift 2
+            [[ -z "$resource" ]] && die "resource name is required for permissionClaims"
+            [[ -z "$verbs" ]] && die "verbs are required for resource $resource"
+            local group="" # TODO split resource into group/resource if needed
+            echo "    - resource: $resource"
+            echo "      group: '$group'"
+            echo "      verbs:"
+            for verb in ${verbs//,/ }; do
+                echo "        - '$verb'"
+            done
+        done
+    } | KUBECONFIG="$kubeconfig" kubectl apply -f- \
+        || die "Failed to create apiexport $export_name"
+
+    KUBECONFIG="$kubeconfig" \
+        kubectl wait --for=condition=IdentityValid=True apiexports "$export_name" --timeout="$timeout" \
+            || die "Timed out waiting for apiexport $export_name to become valid"
+}
+
+kcp::apibinding() {
+    local kubeconfig="$1"
+    local export_ws="$2"
+    local export_name="$3"
+    shift 3
+
+    {
+        echo "apiVersion: apis.kcp.io/v1alpha2"
+        echo "kind: APIBinding"
+        echo "metadata:"
+        echo "  name: $export_name"
+        echo "spec:"
+        echo "  reference:"
+        echo "    export:"
+        echo "      path: ${export_ws}"
+        echo "      name: ${export_name}"
+        if [[ "$#" -gt 0 ]]; then
+            echo "  permissionClaims:"
+        fi
+        while [[ "$#" -gt 0 ]]; do
+            local resource="$1"
+            local name="$2"
+            local verbs="$3"
+            shift 3
+            [[ -z "$resource" ]] && die "resource name is required for permissionClaims"
+            [[ -z "$name" ]] && die "name is required for resource $resource"
+            [[ -z "$verbs" ]] && die "verbs are required for resource $resource"
+            local group="" # TODO split resource into group/resource if needed
+            echo "    - resource: $resource"
+            echo "      group: '$group'"
+            echo "      verbs:"
+            for verb in ${verbs//,/ }; do
+                echo "        - '$verb'"
+            done
+            echo "      state: Accepted"
+            echo "      selector:"
+            echo "        matchAll: true"
+            # echo "          - key: metadata.name"
+            # echo "            operator: In"
+            # echo "            values:"
+            # echo "              - '$name'"
+        done
+    } | KUBECONFIG="$kubeconfig" kubectl apply -f- \
+        || die "Failed to create apibinding $export_name from $export_ws"
+
+    KUBECONFIG="$kubeconfig" \
+        kubectl wait --for=condition=Ready=True apibindings "$export_name" --timeout="$timeout" \
+            || die "Timed out waiting for apibinding $export_name to become ready"
+}
+
+kcp::serviceaccount::admin() {
+    local kubeconfig="$1"
+    local sa_name="$2"
+    local namespace="$3"
+
+    KUBECONFIG="$kubeconfig" \
+        kubectl create serviceaccount "$sa_name" -n "$namespace" --dry-run=client -o yaml \
+            | KUBECONFIG="$kubeconfig" kubectl apply -f- >/dev/null \
+            || die "Failed to create service account $sa_name in namespace $namespace"
+
+    KUBECONFIG="$kubeconfig" \
+        kubectl create clusterrolebinding "$sa_name" -n "$namespace" --dry-run=client -o yaml \
+            --clusterrole=cluster-admin \
+            --serviceaccount="${namespace}:${sa_name}" \
+            | KUBECONFIG="$kubeconfig" kubectl apply -f- >/dev/null \
+            || die "Failed to create clusterrolebinding for service account $sa_name in namespace $namespace"
+
+    KUBECONFIG="$kubeconfig" kubectl create token "$sa_name" --namespace "$namespace" --duration=5208h \
+        || die "Failed to create token for service account $sa_name in namespace $namespace"
+}
+
+kubeconfig::create::bare() {
+    local kubeconfig="$1"
+
+    echo "" > "$kubeconfig"
+    KUBECONFIG="$kubeconfig" \
+        kubectl config set-context default --cluster=default --user=default \
+        || die "Failed to set context in kubeconfig $kubeconfig"
+    KUBECONFIG="$kubeconfig" \
+        kubectl config use-context default \
+        || die "Failed to use context in kubeconfig $kubeconfig"
+}
+
+kubeconfig::create::token() {
+    local kubeconfig="$1"
+    local url="$2"
+    local token="$3"
+
+    kubeconfig::create::bare "$kubeconfig"
+    # TODO: Include TLS certs, could pull them from other kubeconfigs
+    KUBECONFIG="$kubeconfig" \
+        kubectl config set-cluster default --insecure-skip-tls-verify=true --server="$url" \
+        || die "Failed to set cluster in kubeconfig $kubeconfig"
+    KUBECONFIG="$kubeconfig" \
+        kubectl config set-credentials default --token="$token" \
+        || die "Failed to set user credentials in kubeconfig $kubeconfig"
+}
