@@ -149,6 +149,36 @@ docker::local_port() {
     docker port "$container_name" "$container_port" | cut -d' ' -f3
 }
 
+kubectl::krew::setup() {
+    if kubectl krew version &>/dev/null; then
+        return
+    fi
+    # verbatim from https://krew.sigs.k8s.io/docs/user-guide/setup/install/
+    (
+      set -x; cd "$(mktemp -d)" &&
+      OS="$(uname | tr '[:upper:]' '[:lower:]')" &&
+      ARCH="$(uname -m | sed -e 's/x86_64/amd64/' -e 's/\(arm\)\(64\)\?.*/\1\2/' -e 's/aarch64$/arm64/')" &&
+      KREW="krew-${OS}_${ARCH}" &&
+      curl -fsSLO "https://github.com/kubernetes-sigs/krew/releases/latest/download/${KREW}.tar.gz" &&
+      tar zxvf "${KREW}.tar.gz" &&
+      ./"${KREW}" install krew
+    ) \
+        || die "Failed to install krew"
+    export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"
+}
+
+kcp::setup::plugins() {
+    kubectl::krew::setup
+    kubectl krew index add kcp-dev https://github.com/kcp-dev/krew-index.git \
+        || die "Failed to add kcp-dev krew index"
+    kubectl krew install kcp-dev/kcp \
+        || die "Failed to install kcp krew plugin"
+    kubectl krew install kcp-dev/ws \
+        || die "Failed to install ws krew plugin"
+    kubectl krew install kcp-dev/create-workspace \
+        || die "Failed to install create-workspace krew plugin"
+}
+
 kcp::setup::kubeconfigs() {
     local kind_kubeconfig="$1"
     local kcp_kubeconfig="$2"

@@ -5,6 +5,11 @@ example_dir="$(dirname "$0")"
 cd "$(dirname "$0")/../.."
 source "./hack/lib.bash"
 
+if [[ -n "$CI" ]]; then
+    # In CI, install kcp plugins
+    kcp::setup::plugins
+fi
+
 kubeconfigs="$PWD/kubeconfigs"
 log "Using directory for kubeconfigs: $kubeconfigs"
 workspace_kubeconfigs="$kubeconfigs/workspaces"
