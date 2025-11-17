@@ -92,6 +92,7 @@ func (gr *genericReconciler) reconcile(ctx context.Context) (mctrl.Result, error
 
 	cont, err := gr.determineClusters(ctx)
 	if err != nil {
+		gr.log.Error(err, "Failed to determine clusters")
 		return mctrl.Result{}, err
 	}
 	if !cont {
@@ -254,7 +255,7 @@ func (gr *genericReconciler) determineClusters(ctx context.Context) (bool, error
 	// package. Should refactor this when time permits.
 
 	if _, err := gr.opts.GetConsumerCluster(ctx, gr.req.ClusterName); err == nil {
-		// Request comes from consumer cluster
+		gr.log.Info("Request comes from consumer cluster")
 		if err := gr.setConsumerCluster(ctx, gr.req.ClusterName); err != nil {
 			gr.log.Error(err, "Failed to set consumer cluster")
 			return false, err
@@ -262,7 +263,7 @@ func (gr *genericReconciler) determineClusters(ctx context.Context) (bool, error
 	}
 
 	if _, err := gr.opts.GetProviderCluster(ctx, gr.req.ClusterName); err == nil {
-		// Request comes from provider cluster
+		gr.log.Info("Request comes from provider cluster")
 		if err := gr.setProviderCluster(ctx, gr.req.ClusterName); err != nil {
 			gr.log.Error(err, "Failed to set provider cluster")
 			return false, err
@@ -347,6 +348,7 @@ func (gr *genericReconciler) setConsumerCluster(ctx context.Context, name string
 }
 
 func (gr *genericReconciler) setConsumerClusterFromProvider(ctx context.Context) error {
+	gr.log.Info("Determining consumer cluster from provider annotation")
 	providerObj, err := gr.getProviderObj(ctx)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -379,6 +381,7 @@ func (gr *genericReconciler) setProviderCluster(ctx context.Context, name string
 }
 
 func (gr *genericReconciler) setProviderClusterFromConsumer(ctx context.Context) error {
+	gr.log.Info("Determining provider cluster from consumer annotation")
 	consumerObj, err := gr.getConsumerObj(ctx)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -397,7 +400,7 @@ func (gr *genericReconciler) setProviderClusterFromConsumer(ctx context.Context)
 		return fmt.Errorf("no present or possible provider cluster found %q: %w", gr.consumerName, err)
 	}
 
-	gr.log.Info("Determined provider cluster from consumer", "provider", possibleProviderName)
+	gr.log.Info("Determined provider cluster", "provider", possibleProviderName)
 	return gr.setProviderCluster(ctx, possibleProviderName)
 }
 

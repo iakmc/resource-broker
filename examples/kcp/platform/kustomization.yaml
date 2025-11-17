@@ -1,0 +1,15 @@
+resources:
+  - https://kind.sigs.k8s.io/examples/ingress/deploy-ingress-nginx.yaml
+  - etcd.yaml
+  - issuer.yaml
+  - kcp.yaml
+
+patches:
+  - target:
+      kind: Deployment
+      name: ingress-nginx-controller
+      version: v1
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --enable-ssl-passthrough

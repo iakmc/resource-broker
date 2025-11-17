@@ -1,0 +1,94 @@
+apiVersion: operator.kcp.io/v1alpha1
+kind: RootShard
+metadata:
+  name: root
+spec:
+  image:
+    # There's a bug that the IP of the pod and the default 6443 port is
+    # used as the VW base url. This doesn't work with kcp running in
+    # a kube cluster, which uses :6443 itself. This is fixed in main but
+    # not in the release version kcp-operator deploys.
+    tag: main
+  external:
+    hostname: broker-platform-control-plane
+    port: 443
+  certificates:
+    issuerRef:
+      group: cert-manager.io
+      kind: Issuer
+      name: selfsigned
+  cache:
+    embedded:
+      enabled: true
+  etcd:
+    endpoints:
+      - http://kcp-etcd-client.default.svc.cluster.local:2379
+---
+apiVersion: operator.kcp.io/v1alpha1
+kind: FrontProxy
+metadata:
+  name: frontproxy
+spec:
+  rootShard:
+    ref:
+      name: root
+  certificateTemplates:
+    server:
+      spec:
+        dnsNames:
+          - localhost
+        ipAddresses:
+          - 127.0.0.1
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kcp
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-passthrough: "true"
+spec:
+  tls:
+    - hosts:
+        - broker-platform-control-plane
+      secretName: root-frontproxy-server
+  rules:
+    - host: broker-platform-control-plane
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontproxy-front-proxy
+                port:
+                  number: 6443
+---
+apiVersion: operator.kcp.io/v1alpha1
+kind: Kubeconfig
+metadata:
+  name: kubeconfig-kcp-admin
+spec:
+  username: kcp-admin
+  groups:
+    - system:kcp:admin
+  validity: 8766h
+  secretRef:
+    name: admin-kubeconfig
+  target:
+    frontProxyRef:
+      name: frontproxy
+---
+apiVersion: operator.kcp.io/v1alpha1
+kind: Kubeconfig
+metadata:
+  name: kubeconfig-kcp-operator
+spec:
+  username: kcp-admin
+  groups:
+    - system:kcp:admin
+  validity: 8766h
+  secretRef:
+    name: operator-kubeconfig
+  target:
+    rootShardRef:
+      name: root
