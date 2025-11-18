@@ -163,7 +163,7 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 			// tries to look up the cluster by name that fails as the prefix is
 			// missing.
 			// So we add a prefix when storing the cluster AcceptAPI.
-			// clusterName = broker.ProviderPrefix + "#" + clusterName
+			clusterName = broker.ProviderPrefix + "#" + clusterName
 			b.opts.Log.Info("SetAcceptAPI", "gvr", gvr, "cluster", clusterName, "acceptAPI", acceptAPI.Name)
 			b.lock.Lock()
 			defer b.lock.Unlock()
@@ -182,7 +182,7 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 			// tries to look up the cluster by name that fails as the prefix is
 			// missing.
 			// So we add a prefix when storing the cluster AcceptAPI.
-			// clusterName = broker.ProviderPrefix + "#" + clusterName
+			clusterName = broker.ProviderPrefix + "#" + clusterName
 			b.opts.Log.Info("DeleteAcceptAPI", "gvr", gvr, "cluster", clusterName, "acceptAPI", acceptAPIName)
 			b.lock.Lock()
 			defer b.lock.Unlock()
@@ -354,10 +354,6 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 	}
 	b.managers["general"] = generalMgr
 
-	mutateClusterName := func(clusterName string) string {
-		return broker.ProviderPrefix + "#" + clusterName + "#" + clusterName
-	}
-
 	genericOpts := brokergeneric.Options{
 		Coordination: migrationClient,
 		GetProviderCluster: func(ctx context.Context, clusterName string) (cluster.Cluster, error) {
@@ -380,17 +376,13 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 			for providerClusterName, acceptors := range b.apiAccepters[gvr] {
 				cloned := make(map[string]brokerv1alpha1.AcceptAPI, len(acceptors))
 				maps.Copy(cloned, acceptors)
-				ret[mutateClusterName(providerClusterName)] = cloned
+				ret[providerClusterName] = cloned
 			}
 			return ret
 		},
 		GetProviderAcceptedAPIs: func(providerName string, gvr metav1.GroupVersionResource) ([]brokerv1alpha1.AcceptAPI, error) {
 			b.lock.RLock()
 			defer b.lock.RUnlock()
-			// multirProviderNAme#clusterName#clusterName
-			// -> clusterName
-			providerNameSplit := strings.Split(providerName, "#")
-			providerName = providerNameSplit[len(providerNameSplit)-1]
 			b.opts.Log.Info("GetProviderAcceptedAPIs", "providerName", providerName, "gvr", gvr, "storedProviders", slices.Sorted(maps.Keys(b.apiAccepters[gvr])))
 			acceptAPIs := b.apiAccepters[gvr][providerName]
 			return slices.Collect(maps.Values(acceptAPIs)), nil
