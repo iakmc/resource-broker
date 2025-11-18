@@ -127,6 +127,15 @@ helm::install::kcp() {
         "$@"
 }
 
+helm::install::kro() {
+    local kubeconfig="$1"
+    shift 1
+    helm::install "$kubeconfig" \
+        kro oci://registry.k8s.io/kro/charts/kro \
+        --version=0.5.1 \
+        "$@"
+}
+
 kubeconfig::hostname() {
     local kubeconfig="$1"
     local hostname="$(yq '.clusters[0].cluster.server' "$kubeconfig")"
