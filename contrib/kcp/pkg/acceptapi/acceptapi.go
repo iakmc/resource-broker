@@ -108,7 +108,6 @@ func New(opts Options) (*Reconciler, error) {
 	var err error
 	r.Input, err = apiexport.New(opts.KcpConfig, opts.APIExportName, apiexport.Options{
 		Scheme:    opts.Scheme,
-		Separator: "-",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("unable to create acceptapi apiexport provider: %w", err)
