@@ -26,7 +26,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"sync"
+	"strings"
 
 	"github.com/kcp-dev/multicluster-provider/apiexport"
 
@@ -89,7 +89,6 @@ const kcpAcceptAPIFinalizer = "broker.platform-mesh.io/kcp-acceptapi-finalizer"
 // Reconciler implements the kcp AcceptAPI reconciler.
 type Reconciler struct {
 	opts Options
-	lock sync.Mutex
 
 	Input  *apiexport.Provider
 	Output *multi.Provider
@@ -107,8 +106,7 @@ func New(opts Options) (*Reconciler, error) {
 
 	var err error
 	r.Input, err = apiexport.New(opts.KcpConfig, opts.APIExportName, apiexport.Options{
-		Scheme:    opts.Scheme,
-		Separator: "-",
+		Scheme: opts.Scheme,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("unable to create acceptapi apiexport provider: %w", err)
@@ -119,8 +117,9 @@ func New(opts Options) (*Reconciler, error) {
 
 // Reconcile reconciles AcceptAPI resources.
 func (r *Reconciler) Reconcile(ctx context.Context, req mcreconcile.Request) (mctrl.Result, error) {
+	clusterName := strings.ReplaceAll(req.ClusterName, "#", "_")
 	log := ctrllog.FromContext(ctx).WithValues(
-		"clusterName", req.ClusterName,
+		"clusterName", clusterName,
 		"namespace", req.Namespace,
 		"name", req.Name,
 	)
@@ -144,8 +143,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req mcreconcile.Request) (mc
 
 	if !acceptAPI.DeletionTimestamp.IsZero() {
 		log.Info("AcceptAPI is being deleted, removing VW provider")
-		r.opts.DeleteAcceptAPI(gvr, req.ClusterName, acceptAPI.Name)
-		r.Output.RemoveProvider(req.ClusterName)
+		r.opts.DeleteAcceptAPI(gvr, clusterName, acceptAPI.Name)
+		r.Output.RemoveProvider(clusterName)
 		if controllerutil.RemoveFinalizer(acceptAPI, kcpAcceptAPIFinalizer) {
 			if err := cl.GetClient().Update(ctx, acceptAPI); err != nil {
 				return mctrl.Result{}, err
@@ -227,9 +226,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req mcreconcile.Request) (mc
 		return mctrl.Result{}, err
 	}
 
-	existingProvider, ok := r.Output.GetProvider(req.ClusterName)
+	existingProvider, ok := r.Output.GetProvider(clusterName)
 	if ok {
-		existing, err := existingProvider.Get(ctx, req.ClusterName)
+		existing, err := existingProvider.Get(ctx, clusterName)
 		if err != nil && !errors.Is(err, multicluster.ErrClusterNotFound) {
 			log.Error(err, "Error getting existing cluster from provider")
 			return mctrl.Result{Requeue: true}, err
@@ -239,12 +238,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req mcreconcile.Request) (mc
 			return mctrl.Result{}, nil
 		}
 		// Remove the existing provider to replace it.
-		r.Output.RemoveProvider(req.ClusterName)
+		r.Output.RemoveProvider(clusterName)
 	}
 
 	log.Info("Adding VW cluster to provider")
-	r.opts.SetAcceptAPI(gvr, req.ClusterName, *acceptAPI)
-	if err := r.Output.AddProvider(req.ClusterName, single.New(req.ClusterName, vwCluster)); err != nil {
+	r.opts.SetAcceptAPI(gvr, clusterName, *acceptAPI)
+	if err := r.Output.AddProvider(clusterName, single.New(clusterName, vwCluster)); err != nil {
 		log.Error(err, "Error adding VW cluster to provider")
 		return mctrl.Result{}, err
 	}

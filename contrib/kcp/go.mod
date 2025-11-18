@@ -4,15 +4,10 @@ go 1.24.0
 
 replace github.com/platform-mesh/resource-broker => ../..
 
-// Waits for https://github.com/kcp-dev/multicluster-provider/pull/51
-replace github.com/kcp-dev/multicluster-provider => github.com/ntnn/kcp-multicluster-provider v0.2.1-0.20251117010926-445f618d49d3
-
-replace sigs.k8s.io/multicluster-runtime => github.com/ntnn/multicluster-runtime v0.22.0-beta.0.0.20251117152748-d97e71e1b0ef
-
 require (
 	github.com/go-logr/logr v1.4.3
 	github.com/kcp-dev/kcp/sdk v0.28.1
-	github.com/kcp-dev/multicluster-provider v0.2.1
+	github.com/kcp-dev/multicluster-provider v0.2.1-0.20251118100752-8e6061e3e371
 	github.com/platform-mesh/resource-broker v0.0.0-00010101000000-000000000000
 	golang.org/x/sync v0.16.0
 	k8s.io/api v0.34.2
@@ -20,7 +15,7 @@ require (
 	k8s.io/client-go v0.34.2
 	k8s.io/utils v0.0.0-20251002143259-bc988d571ff4
 	sigs.k8s.io/controller-runtime v0.22.4
-	sigs.k8s.io/multicluster-runtime v0.22.0-beta.0
+	sigs.k8s.io/multicluster-runtime v0.22.0-beta.0.0.20251118095141-e15a9cfac31a
 )
 
 require (

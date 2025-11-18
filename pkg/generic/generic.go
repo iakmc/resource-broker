@@ -124,11 +124,10 @@ func (gr *genericReconciler) reconcile(ctx context.Context) (mctrl.Result, error
 		return mctrl.Result{}, err
 	}
 
-	providerAccepts := false
-
+	providerAccepts := true
 	// Only check provider acceptance if there isn't already a migration
 	// going on.
-	if _, ok := consumerObj.GetAnnotations()[newProviderClusterAnn]; !ok {
+	if gr.newProviderCluster == nil {
 		var err error
 		providerAccepts, err = gr.providerAcceptsObj(ctx)
 		if err != nil {
@@ -136,9 +135,8 @@ func (gr *genericReconciler) reconcile(ctx context.Context) (mctrl.Result, error
 		}
 	}
 
-	if !providerAccepts {
+	if gr.newProviderCluster != nil || !providerAccepts {
 		gr.log.Info("Provider no longer accepts resource")
-
 		if err := gr.newProvider(ctx, consumerObj); err != nil {
 			return mctrl.Result{}, err
 		}
@@ -320,17 +318,20 @@ func (gr *genericReconciler) determineClusters(ctx context.Context) (bool, error
 		// No new provider annotation, continue
 		return true, nil
 	}
+	gr.log.Info("Found new provider annotation", "newProvider", gr.newProviderName)
 
-	if gr.newProviderName != gr.req.ClusterName {
-		// Event does not come from new provider cluster, continue
+	if gr.req.ClusterName == gr.newProviderName {
+		gr.log.Info("Event comes from new provider cluster")
+		gr.newProviderCluster = gr.providerCluster
+		if err := gr.setProviderCluster(ctx, consumerObj.GetAnnotations()[providerClusterAnn]); err != nil {
+			return false, err
+		}
 		return true, nil
 	}
 
-	// Event comes from new provider cluster, correct the provider name
-	// and cluster on the event
-	gr.newProviderCluster = gr.providerCluster
-	if err := gr.setProviderCluster(ctx, consumerObj.GetAnnotations()[providerClusterAnn]); err != nil {
-		return false, err
+	gr.newProviderCluster, err = gr.opts.GetProviderCluster(ctx, gr.newProviderName)
+	if err != nil {
+		return false, fmt.Errorf("failed to get new provider cluster %q: %w", gr.newProviderName, err)
 	}
 
 	return true, nil
