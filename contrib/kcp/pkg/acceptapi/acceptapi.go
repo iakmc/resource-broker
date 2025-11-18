@@ -26,7 +26,6 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"sync"
 
 	"github.com/kcp-dev/multicluster-provider/apiexport"
 
@@ -89,7 +88,6 @@ const kcpAcceptAPIFinalizer = "broker.platform-mesh.io/kcp-acceptapi-finalizer"
 // Reconciler implements the kcp AcceptAPI reconciler.
 type Reconciler struct {
 	opts Options
-	lock sync.Mutex
 
 	Input  *apiexport.Provider
 	Output *multi.Provider
@@ -107,7 +105,7 @@ func New(opts Options) (*Reconciler, error) {
 
 	var err error
 	r.Input, err = apiexport.New(opts.KcpConfig, opts.APIExportName, apiexport.Options{
-		Scheme:    opts.Scheme,
+		Scheme: opts.Scheme,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("unable to create acceptapi apiexport provider: %w", err)
