@@ -387,7 +387,12 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 		GetProviderAcceptedAPIs: func(providerName string, gvr metav1.GroupVersionResource) ([]brokerv1alpha1.AcceptAPI, error) {
 			b.lock.RLock()
 			defer b.lock.RUnlock()
-			acceptAPIs := b.apiAccepters[gvr][mutateClusterName(providerName)]
+			// multirProviderNAme#clusterName#clusterName
+			// -> clusterName
+			providerNameSplit := strings.Split(providerName, "#")
+			providerName = providerNameSplit[len(providerNameSplit)-1]
+			b.opts.Log.Info("GetProviderAcceptedAPIs", "providerName", providerName, "gvr", gvr, "storedProviders", slices.Sorted(maps.Keys(b.apiAccepters[gvr])))
+			acceptAPIs := b.apiAccepters[gvr][providerName]
 			return slices.Collect(maps.Values(acceptAPIs)), nil
 		},
 		GetMigrationConfiguration: func(fromGVK metav1.GroupVersionKind, toGVK metav1.GroupVersionKind) (brokerv1alpha1.MigrationConfiguration, bool) {
