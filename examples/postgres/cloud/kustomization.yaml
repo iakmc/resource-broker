@@ -1,6 +1,9 @@
 resources:
-  # Only installing the AcceptAPI CRD from the platform-mesh.io broker
+  # Only the AcceptAPI CRD is needed but mcmanager requires all CRDs at
+  # the moment.
   - ../../../config/crd/bases/broker.platform-mesh.io_acceptapis.yaml
+  - ../../../config/crd/bases/broker.platform-mesh.io_migrationconfigurations.yaml
+  - ../../../config/crd/bases/broker.platform-mesh.io_migrations.yaml
   # CloudNativePG operator to deploy postgresql clusters
   - https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.27/releases/cnpg-1.27.1.yaml
   # The AcceptAPI for resource broker

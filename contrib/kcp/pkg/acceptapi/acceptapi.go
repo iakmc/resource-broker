@@ -22,7 +22,6 @@ package acceptapi
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -44,10 +43,8 @@ import (
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
 	mctrl "sigs.k8s.io/multicluster-runtime"
-	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
-	"sigs.k8s.io/multicluster-runtime/providers/multi"
-	"sigs.k8s.io/multicluster-runtime/providers/single"
+	"sigs.k8s.io/multicluster-runtime/providers/clusters"
 
 	brokerv1alpha1 "github.com/platform-mesh/resource-broker/api/broker/v1alpha1"
 )
@@ -59,7 +56,6 @@ type Options struct {
 	Scheme          *runtime.Scheme
 	SetAcceptAPI    func(metav1.GroupVersionResource, string, brokerv1alpha1.AcceptAPI)
 	DeleteAcceptAPI func(metav1.GroupVersionResource, string, string)
-	DeleteCluster   func(string, string)
 
 	HostOverride string
 	PortOverride string
@@ -91,7 +87,7 @@ type Reconciler struct {
 	opts Options
 
 	Input  *apiexport.Provider
-	Output *multi.Provider
+	Output *clusters.Provider
 }
 
 // New creates a new AcceptAPI reconciler.
@@ -102,7 +98,8 @@ func New(opts Options) (*Reconciler, error) {
 
 	r := new(Reconciler)
 	r.opts = opts
-	r.Output = multi.New(multi.Options{})
+	r.Output = clusters.New()
+	r.Output.EqualClusters = areClustersEqual
 
 	var err error
 	r.Input, err = apiexport.New(opts.KcpConfig, opts.APIExportName, apiexport.Options{
@@ -144,7 +141,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req mcreconcile.Request) (mc
 	if !acceptAPI.DeletionTimestamp.IsZero() {
 		log.Info("AcceptAPI is being deleted, removing VW provider")
 		r.opts.DeleteAcceptAPI(gvr, clusterName, acceptAPI.Name)
-		r.Output.RemoveProvider(clusterName)
+		r.Output.Remove(clusterName)
 		if controllerutil.RemoveFinalizer(acceptAPI, kcpAcceptAPIFinalizer) {
 			if err := cl.GetClient().Update(ctx, acceptAPI); err != nil {
 				return mctrl.Result{}, err
@@ -226,28 +223,20 @@ func (r *Reconciler) Reconcile(ctx context.Context, req mcreconcile.Request) (mc
 		return mctrl.Result{}, err
 	}
 
-	existingProvider, ok := r.Output.GetProvider(clusterName)
-	if ok {
-		existing, err := existingProvider.Get(ctx, clusterName)
-		if err != nil && !errors.Is(err, multicluster.ErrClusterNotFound) {
-			log.Error(err, "Error getting existing cluster from provider")
-			return mctrl.Result{Requeue: true}, err
-		}
-		if areConfigsEqual(existing.GetConfig(), cfg) {
-			log.Info("VW cluster already exists in provider with same config, skipping")
-			return mctrl.Result{}, nil
-		}
-		// Remove the existing provider to replace it.
-		r.Output.RemoveProvider(clusterName)
-	}
-
 	log.Info("Adding VW cluster to provider")
-	r.opts.SetAcceptAPI(gvr, clusterName, *acceptAPI)
-	if err := r.Output.AddProvider(clusterName, single.New(clusterName, vwCluster)); err != nil {
+	r.opts.SetAcceptAPI(gvr, req.ClusterName, *acceptAPI)
+	if err := r.Output.Add(ctx, req.ClusterName, vwCluster); err != nil {
 		log.Error(err, "Error adding VW cluster to provider")
 		return mctrl.Result{}, err
 	}
 	return mctrl.Result{}, nil
+}
+
+func areClustersEqual(cl1, cl2 cluster.Cluster) bool {
+	if cl1 == cl2 {
+		return true
+	}
+	return areConfigsEqual(cl1.GetConfig(), cl2.GetConfig())
 }
 
 func areConfigsEqual(cfg1, cfg2 *rest.Config) bool {

@@ -15,7 +15,7 @@ require (
 	k8s.io/client-go v0.34.2
 	k8s.io/utils v0.0.0-20251002143259-bc988d571ff4
 	sigs.k8s.io/controller-runtime v0.22.4
-	sigs.k8s.io/multicluster-runtime v0.22.0-beta.0.0.20251118095141-e15a9cfac31a
+	sigs.k8s.io/multicluster-runtime v0.22.0-beta.0.0.20251120090003-9e4e256f374e
 )
 
 require (

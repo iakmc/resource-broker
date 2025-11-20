@@ -66,6 +66,15 @@ kubectl::kustomize() {
     die "Failed to kustomize apply $kustomize_dir to cluster with kubeconfig $kubeconfig after $max_retries attempts"
 }
 
+kubectl::wait() {
+    local kubeconfig="$1"
+    local resource="$2"
+    local for="$3"
+
+    kubectl --kubeconfig "$kubeconfig" wait --for="$for" "$resource" --timeout="$timeout" \
+        || die "Timed out waiting for $condition on $resource in cluster with kubeconfig $kubeconfig"
+}
+
 helm::repo() {
     local name="$1"
     local url="$2"
@@ -124,6 +133,15 @@ helm::install::kcp() {
     helm::repo kcp  https://kcp-dev.github.io/helm-charts
     helm::install "$kubeconfig" \
         kcp-operator kcp/kcp-operator \
+        "$@"
+}
+
+helm::install::kro() {
+    local kubeconfig="$1"
+    shift 1
+    helm::install "$kubeconfig" \
+        kro oci://registry.k8s.io/kro/charts/kro \
+        --version=0.5.1 \
         "$@"
 }
 
