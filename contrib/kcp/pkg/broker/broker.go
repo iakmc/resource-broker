@@ -194,26 +194,6 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 				}
 			}
 		},
-		DeleteCluster: func(clusterName string, acceptAPIName string) {
-			// Workaround - the resulting cluster is added to the multi provider
-			// here, which is in turn added to another multi provider with
-			// a prefix. So if the reconciler using that second multi provider
-			// tries to look up the cluster by name that fails as the prefix is
-			// missing.
-			// So we add a prefix when storing the cluster AcceptAPI.
-			// clusterName = broker.ProviderPrefix + "#" + clusterName
-			b.opts.Log.Info("DeleteCluster", "cluster", clusterName, "acceptAPI", acceptAPIName)
-			b.lock.Lock()
-			defer b.lock.Unlock()
-			for gvr, clusterAcceptedAPIs := range b.apiAccepters {
-				if acceptedAPIs, ok := clusterAcceptedAPIs[clusterName]; ok {
-					delete(acceptedAPIs, acceptAPIName)
-					if len(acceptedAPIs) == 0 {
-						delete(b.apiAccepters[gvr], clusterName)
-					}
-				}
-			}
-		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("unable to create acceptapi provider: %w", err)

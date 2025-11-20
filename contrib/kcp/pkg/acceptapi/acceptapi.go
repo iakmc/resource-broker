@@ -56,7 +56,6 @@ type Options struct {
 	Scheme          *runtime.Scheme
 	SetAcceptAPI    func(metav1.GroupVersionResource, string, brokerv1alpha1.AcceptAPI)
 	DeleteAcceptAPI func(metav1.GroupVersionResource, string, string)
-	DeleteCluster   func(string, string)
 
 	HostOverride string
 	PortOverride string
