@@ -139,7 +139,7 @@ build-installer: manifests generate kustomize ## Generate a consolidated YAML wi
 
 ##@ Examples
 
-build-examples: build docker-build
+build-examples: docker-build
 	go build -o bin/example-app ./cmd/example-app
 	docker build -t broker-example-app:dev -f ./cmd/example-app/Dockerfile .
 
