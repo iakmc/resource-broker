@@ -57,20 +57,42 @@ var (
 		"",
 		"Kubeconfig for the compute cluster. If not set, in-cluster config will be used.",
 	)
-	fConsumerKubeconfig = flag.String(
+	fConsumerKubeconfigs = flag.String(
+		"consumer-kubeconfig",
+		"",
+		"Consumer kubeconfigs. If not set, in-cluster config will be used.",
+	)
+	fConsumerKubeconfigDirs = flag.String(
 		"consumer-kubeconfig-dir",
 		"",
-		"Directory for the consumer cluster kubeconfigs. If not set, in-cluster config will be used.",
+		"Directory for the consumer kubeconfigs. If not set, in-cluster config will be used.",
 	)
-	fProviderKubeconfig = flag.String(
+	fProviderKubeconfigs = flag.String(
+		"provider-kubeconfig",
+		"",
+		"Provider kubeconfigs. If not set, in-cluster config will be used.",
+	)
+	fProviderKubeconfigDirs = flag.String(
 		"provider-kubeconfig-dir",
 		"",
-		"Directory for the provider cluster kubeconfigs. If not set, in-cluster config will be used.",
+		"Directory for the provider kubeconfigs. If not set, in-cluster config will be used.",
 	)
 	fGroup   = flag.String("group", "", "Group to watch")
 	fVersion = flag.String("version", "", "Version to watch")
 	fKind    = flag.String("kind", "", "Kind to watch")
 )
+
+func splitAndTrim(s string) []string {
+	parts := strings.Split(s, ",")
+	var result []string
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
+}
 
 func main() {
 	var metricsAddr string
@@ -222,7 +244,8 @@ func main() {
 	}
 
 	consumer, err := file.New(file.Options{
-		KubeconfigDirs: strings.Split(*fConsumerKubeconfig, ","),
+		KubeconfigFiles: splitAndTrim(*fConsumerKubeconfigs),
+		KubeconfigDirs:  splitAndTrim(*fConsumerKubeconfigDirs),
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to create consumer")
@@ -230,7 +253,8 @@ func main() {
 	}
 
 	provider, err := file.New(file.Options{
-		KubeconfigDirs: strings.Split(*fProviderKubeconfig, ","),
+		KubeconfigFiles: splitAndTrim(*fProviderKubeconfigs),
+		KubeconfigDirs:  splitAndTrim(*fProviderKubeconfigDirs),
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to create provider")
