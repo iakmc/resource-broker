@@ -1,7 +1,13 @@
 resources:
-  # TODO the inhouse provider should only template to a simple
-  # deployment or something, not a full operator install
+  # Only the AcceptAPI CRD is needed but mcmanager requires all CRDs at
+  # the moment.
   - ../../../config/crd/bases/broker.platform-mesh.io_acceptapis.yaml
+  - ../../../config/crd/bases/broker.platform-mesh.io_migrationconfigurations.yaml
+  - ../../../config/crd/bases/broker.platform-mesh.io_migrations.yaml
+
+  # TODO: instead of applying the PG CRD configure AcceptAPI with
+  # a template to something else (e.g. just plain configmap or secret,
+  # whatever works and isn't too complex to setup)
   - https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.27/releases/cnpg-1.27.1.yaml
   - rgd.yaml
 
