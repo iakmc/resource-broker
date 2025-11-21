@@ -1,32 +1,19 @@
 package v1alpha1
 
 import (
+	brokerv1alpha1 "github.com/platform-mesh/resource-broker/api/broker/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
 // CertificateSpec defines the desired state of Certificate
 type CertificateSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
-
-	// foo is an example field of Certificate. Edit certificate_types.go to remove/update
-	// +optional
-	Foo *string `json:"foo,omitempty"`
+	// fqdn is the fully qualified domain name for the certificate.
+	// +required
+	FQDN *string `json:"fqdn,omitempty"`
 }
 
 // CertificateStatus defines the observed state of Certificate.
 type CertificateStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
-
 	// conditions represent the current state of the Certificate resource.
 	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
 	//
@@ -40,6 +27,10 @@ type CertificateStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// RelatedResources lists resources related to this VM.
+	// +optional
+	RelatedResources brokerv1alpha1.RelatedResources `json:"relatedResources,omitempty"`
 }
 
 // +kubebuilder:object:root=true
