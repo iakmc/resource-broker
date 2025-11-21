@@ -4,20 +4,20 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.17.2
-  name: acceptapis.broker.platform-mesh.io
+  name: certificates.example.platform-mesh.io
 spec:
-  group: broker.platform-mesh.io
+  group: example.platform-mesh.io
   names:
-    kind: AcceptAPI
-    listKind: AcceptAPIList
-    plural: acceptapis
-    singular: acceptapi
+    kind: Certificate
+    listKind: CertificateList
+    plural: certificates
+    singular: certificate
   scope: Namespaced
   versions:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: AcceptAPI is the Schema for the acceptapis API.
+        description: Certificate is the Schema for the certificates API.
         properties:
           apiVersion:
             description: |-
@@ -37,64 +37,20 @@ spec:
           metadata:
             type: object
           spec:
-            description: AcceptAPISpec defines the desired state of AcceptAPI.
+            description: spec defines the desired state of Certificate
             properties:
-              filters:
-                description: Filters to select which resources of the GVR to accept.
-                items:
-                  description: Filter defines a filter to select resources.
-                  properties:
-                    boundary:
-                      description: Boundary defines min and/or max boundaries for
-                        numeric filtering.
-                      properties:
-                        max:
-                          type: integer
-                        min:
-                          type: integer
-                      type: object
-                    key:
-                      description: Key is the spec key to filter on.
-                      minLength: 1
-                      type: string
-                      x-kubernetes-validations:
-                      - message: Key must not start with 'spec.' as it is implied
-                        rule: '!self.startsWith(''spec.'')'
-                    suffix:
-                      description: Suffix is the required suffix for string filtering.
-                      type: string
-                    valueIn:
-                      description: ValueIn is the list of allowed values for the key.
-                      items:
-                        type: string
-                      type: array
-                  required:
-                  - key
-                  type: object
-                type: array
-              gvr:
-                description: GVR is the GroupVersionResource of the API to accept.
-                properties:
-                  group:
-                    type: string
-                  resource:
-                    type: string
-                  version:
-                    type: string
-                required:
-                - group
-                - resource
-                - version
-                type: object
+              fqdn:
+                description: fqdn is the fully qualified domain name for the certificate.
+                type: string
             required:
-            - gvr
+            - fqdn
             type: object
           status:
-            description: AcceptAPIStatus defines the observed state of AcceptAPI.
+            description: status defines the observed state of Certificate
             properties:
               conditions:
                 description: |-
-                  conditions represent the current state of the AcceptAPI resource.
+                  conditions represent the current state of the Certificate resource.
                   Each condition has a unique type and reflects the status of a specific aspect of the resource.
 
                   Standard condition types include:
@@ -161,7 +117,42 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              relatedResources:
+                additionalProperties:
+                  description: |-
+                    RelatedResource defines references to related resources.
+                    It should be embedded in the status of resources that should be
+                    synchronized by the generic reconciler.
+                  properties:
+                    gvk:
+                      description: |-
+                        GroupVersionKind unambiguously identifies a kind.  It doesn't anonymously include GroupVersion
+                        to avoid automatic coercion.  It doesn't use a GroupVersion to avoid custom marshalling
+                      properties:
+                        group:
+                          type: string
+                        kind:
+                          type: string
+                        version:
+                          type: string
+                      required:
+                      - group
+                      - kind
+                      - version
+                      type: object
+                    name:
+                      type: string
+                    namespace:
+                      type: string
+                  required:
+                  - gvk
+                  - name
+                  type: object
+                description: RelatedResources lists resources related to this VM.
+                type: object
             type: object
+        required:
+        - spec
         type: object
     served: true
     storage: true
