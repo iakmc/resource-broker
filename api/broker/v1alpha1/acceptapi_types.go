@@ -55,6 +55,10 @@ type Filter struct {
 	// Boundary defines min and/or max boundaries for numeric filtering.
 	// +optional
 	Boundary Boundary `json:"boundary,omitempty"`
+
+	// Suffix is the required suffix for string filtering.
+	// +optional
+	Suffix string `json:"suffix,omitempty"`
 }
 
 // Boundary defines a min and max boundary for numeric filtering.
@@ -123,6 +127,17 @@ func (acceptAPI *AcceptAPI) AppliesTo(gvr metav1.GroupVersionResource, obj *unst
 					Key:    filter.Key,
 					Reason: "Value above maximum boundary",
 					Rule:   strconv.Itoa(*filter.Boundary.Max),
+					Value:  val,
+				})
+			}
+		}
+
+		if filter.Suffix != "" {
+			if !strings.HasSuffix(val, filter.Suffix) {
+				reasons = append(reasons, AcceptAPIDenyReason{
+					Key:    filter.Key,
+					Reason: "Value does not have required suffix",
+					Rule:   filter.Suffix,
 					Value:  val,
 				})
 			}
