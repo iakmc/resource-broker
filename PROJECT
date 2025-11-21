@@ -33,23 +33,6 @@ resources:
     crdVersion: v1
     namespaced: true
   domain: platform-mesh.io
-  group: example
-  kind: RDBMS
-  path: github.com/platform-mesh/resource-broker/api/example/v1alpha1
-  plural: rdbmss
-  version: v1alpha1
-- api:
-    crdVersion: v1
-    namespaced: true
-  domain: platform-mesh.io
-  group: example
-  kind: PG
-  path: github.com/platform-mesh/resource-broker/api/example/v1alpha1
-  version: v1alpha1
-- api:
-    crdVersion: v1
-    namespaced: true
-  domain: platform-mesh.io
   group: broker
   kind: MigrationConfiguration
   path: github.com/platform-mesh/resource-broker/api/broker/v1alpha1
