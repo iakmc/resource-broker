@@ -6,6 +6,7 @@ resources:
 - bases/example.platform-mesh.io_vms.yaml
 - bases/broker.platform-mesh.io_migrations.yaml
 - bases/broker.platform-mesh.io_migrationconfigurations.yaml
+- bases/example.platform-mesh.io_certificates.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:
