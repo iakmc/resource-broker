@@ -1,7 +1,3 @@
 resources:
   # No CRD is needed but mcmanager requires all CRDs at the moment.
   - ../../../config/crd/
-  # The postgres order
-  - pg.yaml
-  # The app that will use postgres
-  - app.yaml
