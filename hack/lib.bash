@@ -70,9 +70,8 @@ kubectl::kustomize() {
     local max_retries=30
 
     while [[ "$try_count" -lt "$max_retries" ]]; do
-        # --server-side is for cnpg operator
         if kubectl --kubeconfig "$kubeconfig" kustomize --load-restrictor=LoadRestrictionsNone "$kustomize_dir" \
-                | kubectl --kubeconfig "$kubeconfig" apply -f- --server-side
+                | kubectl --kubeconfig "$kubeconfig" apply -f-
         then
             return
         else
