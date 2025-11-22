@@ -25,7 +25,6 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"strings"
 
 	"github.com/kcp-dev/multicluster-provider/apiexport"
 
@@ -114,9 +113,8 @@ func New(opts Options) (*Reconciler, error) {
 
 // Reconcile reconciles AcceptAPI resources.
 func (r *Reconciler) Reconcile(ctx context.Context, req mcreconcile.Request) (mctrl.Result, error) {
-	clusterName := strings.ReplaceAll(req.ClusterName, "#", "_")
 	log := ctrllog.FromContext(ctx).WithValues(
-		"clusterName", clusterName,
+		"clusterName", req.ClusterName,
 		"namespace", req.Namespace,
 		"name", req.Name,
 	)
@@ -140,8 +138,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req mcreconcile.Request) (mc
 
 	if !acceptAPI.DeletionTimestamp.IsZero() {
 		log.Info("AcceptAPI is being deleted, removing VW provider")
-		r.opts.DeleteAcceptAPI(gvr, clusterName, acceptAPI.Name)
-		r.Output.Remove(clusterName)
+		r.opts.DeleteAcceptAPI(gvr, req.ClusterName, acceptAPI.Name)
+		r.Output.Remove(req.ClusterName)
 		if controllerutil.RemoveFinalizer(acceptAPI, kcpAcceptAPIFinalizer) {
 			if err := cl.GetClient().Update(ctx, acceptAPI); err != nil {
 				return mctrl.Result{}, err
