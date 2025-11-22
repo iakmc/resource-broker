@@ -6,4 +6,5 @@ resources:
 - example_v1alpha1_pg.yaml
 - broker_v1alpha1_migrationconfiguration.yaml
 - broker_v1alpha1_migration.yaml
+- example_v1alpha1_certificate.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

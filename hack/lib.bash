@@ -44,6 +44,25 @@ kubectl::apply() {
     done
 }
 
+kubectl::delete::one() {
+    local kubeconfig="$1"
+    local resource="$2"
+
+    kubectl --kubeconfig "$kubeconfig" delete "$resource" --ignore-not-found --wait=false
+    kubectl --kubeconfig "$kubeconfig" \
+        patch "$resource" \
+        --type=json \
+        --patch='[{"op":"remove","path":"/metadata/finalizers"}]'
+}
+
+kubectl::delete() {
+    local kubeconfig="$1"
+    shift 1
+    for resource in "$@"; do
+        kubectl::delete::one "$kubeconfig" "$resource"
+    done
+}
+
 kubectl::kustomize() {
     local kubeconfig="$1"
     local kustomize_dir="$2"
@@ -51,9 +70,8 @@ kubectl::kustomize() {
     local max_retries=30
 
     while [[ "$try_count" -lt "$max_retries" ]]; do
-        # --server-side is for cnpg operator
         if kubectl --kubeconfig "$kubeconfig" kustomize --load-restrictor=LoadRestrictionsNone "$kustomize_dir" \
-                | kubectl --kubeconfig "$kubeconfig" apply -f- --server-side
+                | kubectl --kubeconfig "$kubeconfig" apply -f-
         then
             return
         else
@@ -159,6 +177,25 @@ kubeconfig::hostname::set() {
     local old_hostname="$2"
     local new_hostname="$3"
     yq -i ".clusters[].cluster.server |= sub(\"$old_hostname\"; \"$new_hostname\")" "$kubeconfig"
+}
+
+kubectl::kubeconfig::secret() {
+    local kubeconfig="$1"
+    local target="$2"
+    local name="$3"
+    local hostname="$4"
+    if [[ -z "$hostname" ]]; then
+        hostname="broker-$name-control-plane:6443"
+    fi
+
+    cp "$target" "$target.tmp"
+    target="$target.tmp"
+    local cur_hostname="$(kubeconfig::hostname "$target")"
+    kubeconfig::hostname::set "$target" "$cur_hostname" "$hostname"
+    kubectl create secret generic "kubeconfig-$name" --dry-run=client -o yaml \
+        --from-file=kubeconfig="$target" \
+        | kubectl::apply "$kubeconfig" "-"
+    rm -f "$target"
 }
 
 docker::local_port() {

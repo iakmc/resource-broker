@@ -4,9 +4,11 @@ resources:
   - ../../../config/crd/bases/broker.platform-mesh.io_acceptapis.yaml
   - ../../../config/crd/bases/broker.platform-mesh.io_migrationconfigurations.yaml
   - ../../../config/crd/bases/broker.platform-mesh.io_migrations.yaml
-  # CloudNativePG operator to deploy postgresql clusters
-  - https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.27/releases/cnpg-1.27.1.yaml
-  # The AcceptAPI for resource broker
+
+  # The AcceptAPI to tell the broker which APIs this provider serves
   - acceptapi.yaml
-  # The RGD to map the accepted API to CloudNativePG and back
+
+  # The issuer to issue certificates
+  - issuer.yaml
+  # The resource graph to project the generic api to cert-manager
   - rgd.yaml

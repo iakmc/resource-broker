@@ -4,20 +4,20 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.17.2
-  name: pgs.example.platform-mesh.io
+  name: certificates.example.platform-mesh.io
 spec:
   group: example.platform-mesh.io
   names:
-    kind: PG
-    listKind: PGList
-    plural: pgs
-    singular: pg
+    kind: Certificate
+    listKind: CertificateList
+    plural: certificates
+    singular: certificate
   scope: Namespaced
   versions:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: PG is the Schema for the pgs API.
+        description: Certificate is the Schema for the certificates API.
         properties:
           apiVersion:
             description: |-
@@ -37,27 +37,20 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of PG
+            description: spec defines the desired state of Certificate
             properties:
-              storage:
-                description: Storage defines the storage configuration for the RDBMS.
-                properties:
-                  size:
-                    description: Size is the size of the storage in GB.
-                    minimum: 1
-                    type: integer
-                required:
-                - size
-                type: object
+              fqdn:
+                description: fqdn is the fully qualified domain name for the certificate.
+                type: string
             required:
-            - storage
+            - fqdn
             type: object
           status:
-            description: status defines the observed state of PG
+            description: status defines the observed state of Certificate
             properties:
               conditions:
                 description: |-
-                  conditions represent the current state of the PG resource.
+                  conditions represent the current state of the Certificate resource.
                   Each condition has a unique type and reflects the status of a specific aspect of the resource.
 
                   Standard condition types include:
@@ -157,9 +150,6 @@ spec:
                   type: object
                 description: RelatedResources lists resources related to this VM.
                 type: object
-              status:
-                description: status represents the overall status of the PG resource.
-                type: string
             type: object
         required:
         - spec

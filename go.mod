@@ -2,19 +2,23 @@ module github.com/platform-mesh/resource-broker
 
 go 1.24.0
 
+replace (
+	sigs.k8s.io/multicluster-runtime => github.com/ntnn/multicluster-runtime v0.22.0-beta.0.0.20251121153941-46711615601c
+	sigs.k8s.io/multicluster-runtime/providers/file => github.com/ntnn/multicluster-runtime/providers/file v0.22.0-beta.0.0.20251121153941-46711615601c
+)
+
 require (
 	github.com/go-logr/logr v1.4.3
 	github.com/google/cel-go v0.26.1
 	github.com/google/go-cmp v0.7.0
-	github.com/lib/pq v1.10.9
 	github.com/stretchr/testify v1.11.1
 	k8s.io/api v0.34.2
 	k8s.io/apimachinery v0.34.2
 	k8s.io/client-go v0.34.2
 	k8s.io/utils v0.0.0-20251002143259-bc988d571ff4
 	sigs.k8s.io/controller-runtime v0.22.4
-	sigs.k8s.io/multicluster-runtime v0.21.0-alpha.9.0.20251007094901-9f200578a35e
-	sigs.k8s.io/multicluster-runtime/providers/file v0.21.0-alpha.9.0.20251007094901-9f200578a35e
+	sigs.k8s.io/multicluster-runtime v0.22.0-beta.0
+	sigs.k8s.io/multicluster-runtime/providers/file v0.0.0-00010101000000-000000000000
 )
 
 require (

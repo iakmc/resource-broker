@@ -11,17 +11,17 @@ metadata:
   labels:
     app.kubernetes.io/name: resource-broker
     app.kubernetes.io/managed-by: kustomize
-  name: example-pg-admin-role
+  name: example-certificate-admin-role
 rules:
 - apiGroups:
   - example.platform-mesh.io
   resources:
-  - pgs
+  - certificates
   verbs:
   - '*'
 - apiGroups:
   - example.platform-mesh.io
   resources:
-  - pgs/status
+  - certificates/status
   verbs:
   - get

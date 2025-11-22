@@ -60,6 +60,9 @@ spec:
                       x-kubernetes-validations:
                       - message: Key must not start with 'spec.' as it is implied
                         rule: '!self.startsWith(''spec.'')'
+                    suffix:
+                      description: Suffix is the required suffix for string filtering.
+                      type: string
                     valueIn:
                       description: ValueIn is the list of allowed values for the key.
                       items:
