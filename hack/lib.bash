@@ -151,6 +151,7 @@ helm::install::kcp() {
     helm::repo kcp  https://kcp-dev.github.io/helm-charts
     helm::install "$kubeconfig" \
         kcp-operator kcp/kcp-operator \
+        --version=0.3.0 \
         "$@"
 }
 
