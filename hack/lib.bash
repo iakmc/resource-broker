@@ -369,13 +369,6 @@ kcp::setup::kubeconfigs() {
     kubeconfig::hostname::set "$kcp_host_kubeconfig" "$hostname:32443" "127.0.0.1:8443"
 }
 
-# kcp::front_proxy_port() {
-#     local kubeconfig="$1"
-#     KUBECONFIG="$kubeconfig" \
-#         kubectl get svc frontproxy-front-proxy -o jsonpath='{.spec.ports[?(@.name=="https")].nodePort}' \
-#         || die "Failed to get front proxy port"
-# }
-
 kcp::front_proxy_forward() {
     local kubeconfig="$1"
     local port="$2"
