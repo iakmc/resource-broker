@@ -47,10 +47,10 @@ _start_broker() {
     kind load docker-image "resource-broker:${image_id}" --name broker-platform \
         || die "Failed to load resource-broker image into kind cluster"
 
-    kubectl::kubeconfig::secret "$kind_platform" "$kind_platform" platform
-    kubectl::kubeconfig::secret "$kind_platform" "$kind_consumer" consumer
-    kubectl::kubeconfig::secret "$kind_platform" "$kind_internalca" internalca
-    kubectl::kubeconfig::secret "$kind_platform" "$kind_externalca" externalca
+    kubectl::kubeconfig::secret "$kind_platform" "$kind_platform" platform broker-platform-control-plane:6443
+    kubectl::kubeconfig::secret "$kind_platform" "$kind_consumer" consumer broker-consumer-control-plane:6443
+    kubectl::kubeconfig::secret "$kind_platform" "$kind_internalca" internalca broker-internalca-control-plane:6443
+    kubectl::kubeconfig::secret "$kind_platform" "$kind_externalca" externalca broker-externalca-control-plane:6443
 
     {
         echo 'apiVersion: apps/v1'
@@ -122,9 +122,7 @@ _cn_from_secret() {
     local resource="$2"
 
     local subject="$(kubectl --kubeconfig "$kubeconfig" get secret "$resource" -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -subject)"
-    # Subject is in the format "subject=CN=example.com" or "subject = CN = example.com"
-    # so strip everything before the '=' and echo without quotes to strip whitespace
-    echo ${subject##*=}
+    echo "$subject"
 }
 
 _wait_for_subject() {
@@ -135,7 +133,7 @@ _wait_for_subject() {
     local subject="$(_cn_from_secret "$kubeconfig" "$resource")"
     local retry_count=0
     local max_retries=360
-    while [[ "$subject" != "$expected_subject" ]]; do
+    while [[ "$subject" != *"$expected_subject"* ]]; do
         log "Current subject is '$subject', waiting for '$expected_subject'"
         retry_count=$((retry_count + 1))
         if [[ $retry_count -ge $max_retries ]]; then

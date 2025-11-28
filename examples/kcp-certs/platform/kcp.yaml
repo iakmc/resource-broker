@@ -8,10 +8,15 @@ spec:
     # used as the VW base url. This doesn't work with kcp running in
     # a kube cluster, which uses :6443 itself. This is fixed in main but
     # not in the release version kcp-operator deploys.
-    tag: main
+    tag: 8dae1f51e
+  # The shardBaseURL is the NodePort service exposing the root shard.
+  # Required for other kind clusters to access the virtual workspaces.
+  shardBaseURL: https://broker-platform-control-plane:32111
+  # The external address is the front proxy, which is exposed through
+  # a NodePort service.
   external:
     hostname: broker-platform-control-plane
-    port: 443
+    port: 32443
   certificates:
     issuerRef:
       group: cert-manager.io
@@ -23,6 +28,29 @@ spec:
   etcd:
     endpoints:
       - http://kcp-etcd-client.default.svc.cluster.local:2379
+---
+# Exposing the root shard via a NodePort service. In production
+# systems this would be handled properly with a load balancer or
+# ingress.
+apiVersion: v1
+kind: Service
+metadata:
+  name: root-kcp-nodeport
+  namespace: default
+spec:
+  type: NodePort
+  ports:
+  - appProtocol: https
+    name: https
+    port: 6443
+    protocol: TCP
+    targetPort: 6443
+    nodePort: 32111
+  selector:
+    app.kubernetes.io/component: rootshard
+    app.kubernetes.io/instance: root
+    app.kubernetes.io/managed-by: kcp-operator
+    app.kubernetes.io/name: kcp
 ---
 apiVersion: operator.kcp.io/v1alpha1
 kind: FrontProxy
@@ -40,28 +68,28 @@ spec:
         ipAddresses:
           - 127.0.0.1
 ---
-apiVersion: networking.k8s.io/v1
-kind: Ingress
+# Exposing the front proxy via a NodePort service. In production
+# systems this would be handled properly with a load balancer or
+# ingress.
+apiVersion: v1
+kind: Service
 metadata:
-  name: kcp
-  annotations:
-    nginx.ingress.kubernetes.io/ssl-passthrough: "true"
+  name: frontproxy-front-proxy-nodeport
+  namespace: default
 spec:
-  tls:
-    - hosts:
-        - broker-platform-control-plane
-      secretName: root-frontproxy-server
-  rules:
-    - host: broker-platform-control-plane
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: frontproxy-front-proxy
-                port:
-                  number: 6443
+  type: NodePort
+  ports:
+  - appProtocol: https
+    name: https
+    port: 6443
+    protocol: TCP
+    targetPort: 6443
+    nodePort: 32443
+  selector:
+    app.kubernetes.io/component: front-proxy
+    app.kubernetes.io/instance: frontproxy
+    app.kubernetes.io/managed-by: kcp-operator
+    app.kubernetes.io/name: kcp
 ---
 apiVersion: operator.kcp.io/v1alpha1
 kind: Kubeconfig

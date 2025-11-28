@@ -93,6 +93,26 @@ kubectl::wait() {
         || die "Timed out waiting for $condition on $resource in cluster with kubeconfig $kubeconfig"
 }
 
+kubectl::wait::not_empty() {
+    local kubeconfig="$1"
+    local resource="$2"
+    local jsonpath="$3"
+
+    local try_count=0
+    local max_retries=120
+    while [[ "$try_count" -lt "$max_retries" ]]; do
+        local value="$(kubectl --kubeconfig "$kubeconfig" get "$resource" -o "jsonpath=$jsonpath")"
+        if [[ -n "$value" ]]; then
+            return
+        else
+            try_count=$((try_count + 1))
+            log "Value at $jsonpath is empty, retrying ($try_count/$max_retries)..."
+            sleep 2
+        fi
+    done
+    die "Failed to get non-empty value at $jsonpath for $resource in cluster with kubeconfig $kubeconfig after $max_retries attempts"
+}
+
 helm::repo() {
     local name="$1"
     local url="$2"
@@ -151,6 +171,7 @@ helm::install::kcp() {
     helm::repo kcp  https://kcp-dev.github.io/helm-charts
     helm::install "$kubeconfig" \
         kcp-operator kcp/kcp-operator \
+        --version=0.3.0 \
         "$@"
 }
 
@@ -161,6 +182,106 @@ helm::install::kro() {
         kro oci://registry.k8s.io/kro/charts/kro \
         --version=0.5.1 \
         "$@"
+}
+
+helm::install::api_syncagent() {
+    local kubeconfig="$1"
+    local apiExportName="$2"
+    local agentName="$3"
+    local kcpKubeconfig="$4"
+    shift 4
+
+    if [[ -z "$kubeconfig" || -z "$apiExportName" || -z "$agentName" || -z "$kcpKubeconfig" ]]; then
+        die "kubeconfig, apiExportName, agentName, and kcpKubeconfig are required"
+    fi
+
+    helm::repo kcp  https://kcp-dev.github.io/helm-charts
+    helm::install "$kubeconfig" \
+        --namespace default \
+        api-syncagent kcp/api-syncagent \
+        --version=0.4.5 \
+        --set namespace=default \
+        --set apiExportName="$apiExportName" \
+        --set agentName="$agentName" \
+        --set kcpKubeconfig="$kcpKubeconfig" \
+        "$@"
+}
+
+apisyncagent::publish() {
+    local kubeconfig="$1"
+    local resource="$2"
+    local kind="$3"
+    local group="$4"
+    local versions="$5"
+    shift 5
+    if [[ -z "$resource" || -z "$kind" || -z "$group" || -z "$versions" ]]; then
+        die "resource, kind, group, and versions are required"
+    fi
+
+    {
+        echo "apiVersion: syncagent.kcp.io/v1alpha1"
+        echo "kind: PublishedResource"
+        echo "metadata:"
+        echo "  name: $resource"
+        echo "spec:"
+        echo "  resource:"
+        echo "    kind: $kind"
+        echo "    apiGroup: $group"
+        echo "    versions: [$versions]"
+        echo "  related:"
+        while [[ "$#" -gt 0 ]]; do
+            apisyncagent::publish::related "$@"
+            shift 4
+        done
+        echo "---"
+        echo "apiVersion: rbac.authorization.k8s.io/v1"
+        echo "kind: ClusterRole"
+        echo "metadata:"
+        echo "  name: api-syncagent:$resource"
+        echo "rules:"
+        echo "  - apiGroups:"
+        echo "      - $group"
+        echo "    resources:"
+        echo "      - $resource"
+        echo "    verbs:"
+        echo "      - get"
+        echo "      - list"
+        echo "      - watch"
+        echo "      - create"
+        echo "      - update"
+        echo "      - delete"
+        echo "      - patch"
+        echo "---"
+        echo "apiVersion: rbac.authorization.k8s.io/v1"
+        echo "kind: ClusterRoleBinding"
+        echo "metadata:"
+        echo "  name: api-syncagent:$resource"
+        echo "roleRef:"
+        echo "  apiGroup: rbac.authorization.k8s.io"
+        echo "  kind: ClusterRole"
+        echo "  name: api-syncagent:$resource"
+        echo "subjects:"
+        echo "  - kind: ServiceAccount"
+        echo "    name: api-syncagent"
+        echo "    namespace: default"
+    } | kubectl::apply "$kubeconfig" -
+}
+
+apisyncagent::publish::related() {
+    local identifier="$1"
+    local origin="$2"
+    local kind="$3"
+    local path="$4"
+    if [[ -z "$identifier" || -z "$origin" || -z "$kind" || -z "$path" ]]; then
+        die "identifier, origin, kind, and path are required for related resource"
+    fi
+
+    echo "  - identifier: $identifier"
+    echo "    origin: $origin"
+    echo "    kind: $kind"
+    echo "    object:"
+    echo "      reference:"
+    echo "        path: $path"
 }
 
 kubeconfig::hostname() {
@@ -184,18 +305,25 @@ kubectl::kubeconfig::secret() {
     local target="$2"
     local name="$3"
     local hostname="$4"
-    if [[ -z "$hostname" ]]; then
-        hostname="broker-$name-control-plane:6443"
-    fi
 
     cp "$target" "$target.tmp"
     target="$target.tmp"
-    local cur_hostname="$(kubeconfig::hostname "$target")"
-    kubeconfig::hostname::set "$target" "$cur_hostname" "$hostname"
+
+    if [[ -n "$hostname" ]]; then
+        local cur_hostname="$(kubeconfig::hostname "$target")"
+        kubeconfig::hostname::set "$target" "$cur_hostname" "$hostname"
+    fi
+
     kubectl create secret generic "kubeconfig-$name" --dry-run=client -o yaml \
         --from-file=kubeconfig="$target" \
         | kubectl::apply "$kubeconfig" "-"
     rm -f "$target"
+}
+
+kubectl::kubeconfig::current_server_url() {
+    local kubeconfig="$1"
+    local current_context="$(kubectl --kubeconfig "$kubeconfig" config current-context)"
+    kubectl --kubeconfig "$kubeconfig" config view -o jsonpath="{.clusters[?(@.name==\"$current_context\")].cluster.server}"
 }
 
 docker::local_port() {
@@ -250,22 +378,16 @@ kcp::setup::kubeconfigs() {
         > "$kcp_kubeconfig" \
         || die "Failed to get admin kubeconfig from kind cluster"
 
-    # Replace the port with the node port from the service
-    yq -i ".clusters[].cluster.server |= sub(\":6443\"; \":8443\")" "$kcp_kubeconfig"
+    # Replace the port with the port-forwarded port
 
     # Create port forward to access kcp from host
     kcp::front_proxy_forward "$kind_kubeconfig" "8443"
-    cp "$kcp_kubeconfig" "$kcp_host_kubeconfig"
-    local hostname="$(kubectl --kubeconfig "$kind_kubeconfig" get rootshards.operator.kcp.io root -o jsonpath='{.spec.external.hostname}')"
-    kubeconfig::hostname::set "$kcp_host_kubeconfig" "$hostname:443" "127.0.0.1:8443"
-}
 
-# kcp::front_proxy_port() {
-#     local kubeconfig="$1"
-#     KUBECONFIG="$kubeconfig" \
-#         kubectl get svc frontproxy-front-proxy -o jsonpath='{.spec.ports[?(@.name=="https")].nodePort}' \
-#         || die "Failed to get front proxy port"
-# }
+    cp "$kcp_kubeconfig" "$kcp_host_kubeconfig"
+    yq -i ".clusters[].cluster.server |= sub(\":32443\"; \":8443\")" "$kcp_host_kubeconfig"
+    local hostname="$(kubectl --kubeconfig "$kind_kubeconfig" get rootshards.operator.kcp.io root -o jsonpath='{.spec.external.hostname}')"
+    kubeconfig::hostname::set "$kcp_host_kubeconfig" "$hostname:32443" "127.0.0.1:8443"
+}
 
 kcp::front_proxy_forward() {
     local kubeconfig="$1"
@@ -358,6 +480,10 @@ kcp::apiexport() {
             echo "    - resource: $resource"
             echo "      group: '$group'"
             echo "      verbs:"
+            if [[ "$verbs" == "*" ]]; then
+                echo "        - '*'"
+                continue
+            fi
             for verb in ${verbs//,/ }; do
                 echo "        - '$verb'"
             done
@@ -391,22 +517,25 @@ kcp::apibinding() {
         fi
         while [[ "$#" -gt 0 ]]; do
             local resource="$1"
-            local name="$2"
+            local group="$2"
             local verbs="$3"
             shift 3
             [[ -z "$resource" ]] && die "resource name is required for permissionClaims"
-            [[ -z "$name" ]] && die "name is required for resource $resource"
             [[ -z "$verbs" ]] && die "verbs are required for resource $resource"
-            local group="" # TODO split resource into group/resource if needed
             echo "    - resource: $resource"
             echo "      group: '$group'"
-            echo "      verbs:"
-            for verb in ${verbs//,/ }; do
-                echo "        - '$verb'"
-            done
             echo "      state: Accepted"
             echo "      selector:"
             echo "        matchAll: true"
+            echo "      verbs:"
+            # special handling for wildcard because shell expansion
+            if [[ "$verbs" == "*" ]]; then
+                echo "        - '*'"
+                continue
+            fi
+            for verb in ${verbs//,/ }; do
+                echo "        - '$verb'"
+            done
             # echo "          - key: metadata.name"
             # echo "            operator: In"
             # echo "            values:"
@@ -424,6 +553,7 @@ kcp::serviceaccount::admin() {
     local kubeconfig="$1"
     local sa_name="$2"
     local namespace="$3"
+    [[ -z "$namespace" ]] && namespace="default"
 
     KUBECONFIG="$kubeconfig" \
         kubectl create serviceaccount "$sa_name" -n "$namespace" --dry-run=client -o yaml \
