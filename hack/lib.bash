@@ -93,6 +93,26 @@ kubectl::wait() {
         || die "Timed out waiting for $condition on $resource in cluster with kubeconfig $kubeconfig"
 }
 
+kubectl::wait::not_empty() {
+    local kubeconfig="$1"
+    local resource="$2"
+    local jsonpath="$3"
+
+    local try_count=0
+    local max_retries=120
+    while [[ "$try_count" -lt "$max_retries" ]]; do
+        local value="$(kubectl --kubeconfig "$kubeconfig" get "$resource" -o "jsonpath=$jsonpath")"
+        if [[ -n "$value" ]]; then
+            return
+        else
+            try_count=$((try_count + 1))
+            log "Value at $jsonpath is empty, retrying ($try_count/$max_retries)..."
+            sleep 2
+        fi
+    done
+    die "Failed to get non-empty value at $jsonpath for $resource in cluster with kubeconfig $kubeconfig after $max_retries attempts"
+}
+
 helm::repo() {
     local name="$1"
     local url="$2"
