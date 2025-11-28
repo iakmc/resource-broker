@@ -300,6 +300,12 @@ kubectl::kubeconfig::secret() {
     rm -f "$target"
 }
 
+kubectl::kubeconfig::current_server_url() {
+    local kubeconfig="$1"
+    local current_context="$(kubectl --kubeconfig "$kubeconfig" config current-context)"
+    kubectl --kubeconfig "$kubeconfig" config view -o jsonpath="{.clusters[?(@.name==\"$current_context\")].cluster.server}"
+}
+
 docker::local_port() {
     local container_name="$1"
     local container_port="$2"
