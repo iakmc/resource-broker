@@ -460,6 +460,10 @@ kcp::apiexport() {
             echo "    - resource: $resource"
             echo "      group: '$group'"
             echo "      verbs:"
+            if [[ "$verbs" == "*" ]]; then
+                echo "        - '*'"
+                continue
+            fi
             for verb in ${verbs//,/ }; do
                 echo "        - '$verb'"
             done
@@ -493,22 +497,25 @@ kcp::apibinding() {
         fi
         while [[ "$#" -gt 0 ]]; do
             local resource="$1"
-            local name="$2"
+            local group="$2"
             local verbs="$3"
             shift 3
             [[ -z "$resource" ]] && die "resource name is required for permissionClaims"
-            [[ -z "$name" ]] && die "name is required for resource $resource"
             [[ -z "$verbs" ]] && die "verbs are required for resource $resource"
-            local group="" # TODO split resource into group/resource if needed
             echo "    - resource: $resource"
             echo "      group: '$group'"
-            echo "      verbs:"
-            for verb in ${verbs//,/ }; do
-                echo "        - '$verb'"
-            done
             echo "      state: Accepted"
             echo "      selector:"
             echo "        matchAll: true"
+            echo "      verbs:"
+            # special handling for wildcard because shell expansion
+            if [[ "$verbs" == "*" ]]; then
+                echo "        - '*'"
+                continue
+            fi
+            for verb in ${verbs//,/ }; do
+                echo "        - '$verb'"
+            done
             # echo "          - key: metadata.name"
             # echo "            operator: In"
             # echo "            values:"
