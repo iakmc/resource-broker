@@ -285,14 +285,15 @@ kubectl::kubeconfig::secret() {
     local target="$2"
     local name="$3"
     local hostname="$4"
-    if [[ -z "$hostname" ]]; then
-        hostname="broker-$name-control-plane:6443"
-    fi
 
     cp "$target" "$target.tmp"
     target="$target.tmp"
-    local cur_hostname="$(kubeconfig::hostname "$target")"
-    kubeconfig::hostname::set "$target" "$cur_hostname" "$hostname"
+
+    if [[ -n "$hostname" ]]; then
+        local cur_hostname="$(kubeconfig::hostname "$target")"
+        kubeconfig::hostname::set "$target" "$cur_hostname" "$hostname"
+    fi
+
     kubectl create secret generic "kubeconfig-$name" --dry-run=client -o yaml \
         --from-file=kubeconfig="$target" \
         | kubectl::apply "$kubeconfig" "-"
