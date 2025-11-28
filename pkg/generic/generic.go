@@ -19,6 +19,7 @@ package generic
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/go-logr/logr"
@@ -733,14 +734,17 @@ func (gr *genericReconciler) syncRelatedResources(ctx context.Context, providerN
 		return fmt.Errorf("failed to get resource from consumer cluster %q: %w", gr.consumerName, err)
 	}
 
+	var errs error
 	for key, relatedResource := range relatedResources {
-		gr.syncRelatedResource(ctx, providerCluster, key, relatedResource, consumerObj)
+		if err := gr.syncRelatedResource(ctx, providerCluster, key, relatedResource, consumerObj); err != nil {
+			errs = errors.Join(errs, err)
+		}
 	}
 
-	return nil
+	return errs
 }
 
-func (gr *genericReconciler) syncRelatedResource(ctx context.Context, providerCluster cluster.Cluster, key string, relatedResource brokerv1alpha1.RelatedResource, consumerObj *unstructured.Unstructured) {
+func (gr *genericReconciler) syncRelatedResource(ctx context.Context, providerCluster cluster.Cluster, key string, relatedResource brokerv1alpha1.RelatedResource, consumerObj *unstructured.Unstructured) error {
 	log := gr.log.WithValues("relatedResourceKey", key)
 	log.Info("Syncing related resource", "relatedResource", relatedResource)
 	providerRRObj := &unstructured.Unstructured{}
@@ -754,7 +758,7 @@ func (gr *genericReconciler) syncRelatedResource(ctx context.Context, providerCl
 		providerRRObj,
 	); err != nil {
 		log.Error(err, "Failed to get related resource from provider cluster", "relatedResource", relatedResource)
-		return
+		return err
 	}
 
 	// TODO conditions
@@ -770,7 +774,7 @@ func (gr *genericReconciler) syncRelatedResource(ctx context.Context, providerCl
 	)
 	if err != nil {
 		log.Error(err, "Failed to copy related resource to consumer cluster")
-		return
+		return err
 	}
 
 	log.Info("Getting synced resource from consumer cluster")
@@ -785,16 +789,18 @@ func (gr *genericReconciler) syncRelatedResource(ctx context.Context, providerCl
 		consumerRRObj,
 	); err != nil {
 		log.Error(err, "Failed to get synced related resource from consumer cluster")
-		return
+		return err
 	}
 
 	log.Info("Setting owner reference on related resource in consumer cluster")
 	if err := controllerutil.SetOwnerReference(consumerObj, consumerRRObj, gr.consumerCluster.GetScheme()); err != nil {
 		log.Error(err, "Failed to set owner reference on related resource in consumer cluster")
-		return
+		return err
 	}
 
 	if err := gr.consumerCluster.GetClient().Update(ctx, consumerRRObj); err != nil {
 		log.Error(err, "Failed to set owner reference on related resource in consumer cluster")
+		return err
 	}
+	return nil
 }
