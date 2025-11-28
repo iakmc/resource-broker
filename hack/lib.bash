@@ -164,6 +164,106 @@ helm::install::kro() {
         "$@"
 }
 
+helm::install::api_syncagent() {
+    local kubeconfig="$1"
+    local apiExportName="$2"
+    local agentName="$3"
+    local kcpKubeconfig="$4"
+    shift 4
+
+    if [[ -z "$kubeconfig" || -z "$apiExportName" || -z "$agentName" || -z "$kcpKubeconfig" ]]; then
+        die "kubeconfig, apiExportName, agentName, and kcpKubeconfig are required"
+    fi
+
+    helm::repo kcp  https://kcp-dev.github.io/helm-charts
+    helm::install "$kubeconfig" \
+        --namespace default \
+        api-syncagent kcp/api-syncagent \
+        --version=0.4.5 \
+        --set namespace=default \
+        --set apiExportName="$apiExportName" \
+        --set agentName="$agentName" \
+        --set kcpKubeconfig="$kcpKubeconfig" \
+        "$@"
+}
+
+apisyncagent::publish() {
+    local kubeconfig="$1"
+    local resource="$2"
+    local kind="$3"
+    local group="$4"
+    local versions="$5"
+    shift 5
+    if [[ -z "$resource" || -z "$kind" || -z "$group" || -z "$versions" ]]; then
+        die "resource, kind, group, and versions are required"
+    fi
+
+    {
+        echo "apiVersion: syncagent.kcp.io/v1alpha1"
+        echo "kind: PublishedResource"
+        echo "metadata:"
+        echo "  name: $resource"
+        echo "spec:"
+        echo "  resource:"
+        echo "    kind: $kind"
+        echo "    apiGroup: $group"
+        echo "    versions: [$versions]"
+        echo "  related:"
+        while [[ "$#" -gt 0 ]]; do
+            apisyncagent::publish::related "$@"
+            shift 4
+        done
+        echo "---"
+        echo "apiVersion: rbac.authorization.k8s.io/v1"
+        echo "kind: ClusterRole"
+        echo "metadata:"
+        echo "  name: api-syncagent:$resource"
+        echo "rules:"
+        echo "  - apiGroups:"
+        echo "      - $group"
+        echo "    resources:"
+        echo "      - $resource"
+        echo "    verbs:"
+        echo "      - get"
+        echo "      - list"
+        echo "      - watch"
+        echo "      - create"
+        echo "      - update"
+        echo "      - delete"
+        echo "      - patch"
+        echo "---"
+        echo "apiVersion: rbac.authorization.k8s.io/v1"
+        echo "kind: ClusterRoleBinding"
+        echo "metadata:"
+        echo "  name: api-syncagent:$resource"
+        echo "roleRef:"
+        echo "  apiGroup: rbac.authorization.k8s.io"
+        echo "  kind: ClusterRole"
+        echo "  name: api-syncagent:$resource"
+        echo "subjects:"
+        echo "  - kind: ServiceAccount"
+        echo "    name: api-syncagent"
+        echo "    namespace: default"
+    } | kubectl::apply "$kubeconfig" -
+}
+
+apisyncagent::publish::related() {
+    local identifier="$1"
+    local origin="$2"
+    local kind="$3"
+    local path="$4"
+    if [[ -z "$identifier" || -z "$origin" || -z "$kind" || -z "$path" ]]; then
+        die "identifier, origin, kind, and path are required for related resource"
+    fi
+
+    echo "  - identifier: $identifier"
+    echo "    origin: $origin"
+    echo "    kind: $kind"
+    echo "    object:"
+    echo "      reference:"
+    echo "        path: $path"
+}
+
 kubeconfig::hostname() {
     local kubeconfig="$1"
     local hostname="$(yq '.clusters[0].cluster.server' "$kubeconfig")"
