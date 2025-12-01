@@ -140,6 +140,7 @@ helm::install::certmanager() {
     helm::install "$kubeconfig" \
         cert-manager oci://quay.io/jetstack/charts/cert-manager:v1.19.1 \
           --set crds.enabled=true \
+          --set enableCertificateOwnerRef=true \
           "$@"
 }
 
