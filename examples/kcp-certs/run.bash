@@ -27,6 +27,7 @@ ws_externalca="$workspace_kubeconfigs/externalca.kubeconfig"
 
 kind_consumer="$kubeconfigs/consumer.kubeconfig"
 ws_consumer="$workspace_kubeconfigs/consumer.kubeconfig"
+vw_consumer="$workspace_kubeconfigs/consumer.vw.kubeconfig"
 
 _setup() {
     log "Setting up platform cluster"
@@ -79,6 +80,17 @@ _setup() {
         secrets "" '*' \
         events "" '*' \
         namespaces "" '*'
+
+    local consumer_cluster_id="$(kubectl --kubeconfig "$ws_consumer" get logicalclusters.core.kcp.io cluster -o jsonpath='{.metadata.annotations.kcp\.io/cluster}')"
+    local service_endpoint_url="$(kubectl --kubeconfig "$ws_platform" get apiexportendpointslices certificates -o jsonpath='{.status.endpoints[0].url}')/clusters/$consumer_cluster_id"
+    cp "$ws_platform" "$vw_consumer"
+    yq -i ".clusters[].cluster.server = \"$service_endpoint_url\"" \
+        "$vw_consumer"
+    local old_hostname="$(kubeconfig::hostname "$vw_consumer")"
+    kubeconfig::hostname::set \
+        "$vw_consumer" \
+        "$old_hostname" \
+        "127.0.0.1:8443"
 }
 
 _cluster_id() {
