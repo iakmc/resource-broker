@@ -27,6 +27,7 @@ ws_externalca="$workspace_kubeconfigs/externalca.kubeconfig"
 
 kind_consumer="$kubeconfigs/consumer.kubeconfig"
 ws_consumer="$workspace_kubeconfigs/consumer.kubeconfig"
+vw_consumer="$workspace_kubeconfigs/consumer.vw.kubeconfig"
 
 _setup() {
     log "Setting up platform cluster"
@@ -79,6 +80,17 @@ _setup() {
         secrets "" '*' \
         events "" '*' \
         namespaces "" '*'
+
+    local consumer_cluster_id="$(kubectl --kubeconfig "$ws_consumer" get logicalclusters.core.kcp.io cluster -o jsonpath='{.metadata.annotations.kcp\.io/cluster}')"
+    local service_endpoint_url="$(kubectl --kubeconfig "$ws_platform" get apiexportendpointslices certificates -o jsonpath='{.status.endpoints[0].url}')/clusters/$consumer_cluster_id"
+    cp "$ws_platform" "$vw_consumer"
+    yq -i ".clusters[].cluster.server = \"$service_endpoint_url\"" \
+        "$vw_consumer"
+    local old_hostname="$(kubeconfig::hostname "$vw_consumer")"
+    kubeconfig::hostname::set \
+        "$vw_consumer" \
+        "$old_hostname" \
+        "127.0.0.1:8443"
 }
 
 _cluster_id() {
@@ -324,12 +336,25 @@ _run_example() {
 }
 
 _cleanup() {
-    kubectl::delete "$ws_consumer" \
-        certificates.example.platform-mesh.io/cert-from-consumer
+    log "Cleaning up example resources in consumer ws"
+    kubectl::delete "$ws_consumer" certificates.example.platform-mesh.io/cert-from-consumer
+    log "Cleaning up example resources in consumer vw"
+    kubectl::delete "$vw_consumer" certificates.example.platform-mesh.io/cert-from-consumer
+
+    log "Cleaning up example resources in internalca vw"
+    kubectl::delete "$kubeconfigs/workspaces/internalca.vw.kubeconfig" certificates.example.platform-mesh.io/cert-from-consumer
+    kubectl --kubeconfig "$kubeconfigs/workspaces/internalca.vw.kubeconfig" delete secrets -A --selector kro.run/owned=true
+    log "Cleaning up example resources in internalca provider"
     kubectl --kubeconfig "$kind_internalca" delete certificates.example.platform-mesh.io -A --all
     kubectl --kubeconfig "$kind_internalca" delete secrets -A --selector kro.run/owned=true
+
+    log "Cleaning up example resources in externalca vw"
+    kubectl::delete "$kubeconfigs/workspaces/externalca.vw.kubeconfig" certificates.example.platform-mesh.io/cert-from-consumer
+    kubectl --kubeconfig "$kubeconfigs/workspaces/externalca.vw.kubeconfig" delete secrets -A --selector kro.run/owned=true
+    log "Cleaning up example resources in externalca provider"
     kubectl --kubeconfig "$kind_externalca" delete certificates.example.platform-mesh.io -A --all
     kubectl --kubeconfig "$kind_externalca" delete secrets -A --selector kro.run/owned=true
+
     return 0
 }
 
