@@ -7,6 +7,7 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
 
@@ -52,7 +53,15 @@ jobs:
         run: mkdir -p ${{ github.workspace }}/tmp
 
       - name: Running example
-        run: ./examples/${{ matrix.example }}/run.bash
+        uses: ntnn/mdextract@v0.1.0
+        env:
+          TMPDIR: ${{ github.workspace }}/tmp
+        with:
+          input: ./examples/${{ matrix.example }}/README.md
+          output: "$TMPDIR/${{ matrix.example }}.bash"
+          language: bash
+
+      - run: bash "$TMPDIR/${{ matrix.example }}.bash"
         env:
           TMPDIR: ${{ github.workspace }}/tmp
 
