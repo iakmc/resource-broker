@@ -4,15 +4,10 @@ go 1.24.0
 
 replace github.com/platform-mesh/resource-broker => ../..
 
-replace (
-	github.com/kcp-dev/multicluster-provider => github.com/ntnn/kcp-multicluster-provider v0.2.1-0.20251122072304-af156fd0bff4
-	sigs.k8s.io/multicluster-runtime => github.com/ntnn/multicluster-runtime v0.22.0-beta.0.0.20251121153941-46711615601c
-)
-
 require (
 	github.com/go-logr/logr v1.4.3
 	github.com/kcp-dev/kcp/sdk v0.28.3
-	github.com/kcp-dev/multicluster-provider v0.2.1-0.20251118100752-8e6061e3e371
+	github.com/kcp-dev/multicluster-provider v0.4.0
 	github.com/platform-mesh/resource-broker v0.0.0-00010101000000-000000000000
 	golang.org/x/sync v0.19.0
 	k8s.io/api v0.34.2
@@ -20,7 +15,7 @@ require (
 	k8s.io/client-go v0.34.2
 	k8s.io/utils v0.0.0-20251002143259-bc988d571ff4
 	sigs.k8s.io/controller-runtime v0.22.4
-	sigs.k8s.io/multicluster-runtime v0.22.0-beta.0.0.20251120090003-9e4e256f374e
+	sigs.k8s.io/multicluster-runtime v0.22.4-beta.1
 )
 
 require (
@@ -45,8 +40,9 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/kcp-dev/apimachinery/v2 v2.29.0-rc.0 // indirect
+	github.com/kcp-dev/apimachinery/v2 v2.29.1-0.20251209121225-cf3c0b624983 // indirect
 	github.com/kcp-dev/logicalcluster/v3 v3.0.5 // indirect
+	github.com/kcp-dev/sdk v0.28.1-0.20251209130449-436a0347809b // indirect
 	github.com/mailru/easyjson v0.9.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
@@ -78,7 +74,7 @@ require (
 	gopkg.in/evanphx/json-patch.v4 v4.12.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	k8s.io/apiextensions-apiserver v0.34.1 // indirect
+	k8s.io/apiextensions-apiserver v0.34.2 // indirect
 	k8s.io/klog/v2 v2.130.1 // indirect
 	k8s.io/kube-openapi v0.0.0-20250710124328-f3f2b991d03b // indirect
 	sigs.k8s.io/json v0.0.0-20241014173422-cfa47c3a1cc8 // indirect

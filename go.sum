@@ -95,10 +95,6 @@ github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee h1:W5t00kpgFd
 github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee/go.mod h1:yWuevngMOJpCy52FWWMvUC8ws7m/LJsjYzDa0/r8luk=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq1c1nUAm88MOHcQC9l5mIlSMApZMrHA=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
-github.com/ntnn/multicluster-runtime v0.22.0-beta.0.0.20251121153941-46711615601c h1:mzYeE0T/FSJCppvGwUlLIuQibdk1GIYe72yLlOxxQHI=
-github.com/ntnn/multicluster-runtime v0.22.0-beta.0.0.20251121153941-46711615601c/go.mod h1:4e/q1PCYE75S76Fd4nrPY3cbnj1TXjnjYfJ5ysQyaMw=
-github.com/ntnn/multicluster-runtime/providers/file v0.22.0-beta.0.0.20251121153941-46711615601c h1:jKKXQGe1BO3TZx4+lLxyvmnAbtkjSSD/3YP0BZigsKQ=
-github.com/ntnn/multicluster-runtime/providers/file v0.22.0-beta.0.0.20251121153941-46711615601c/go.mod h1:mcYNfWzzhYStWSUSK+NZW2bRpRMBTG3aUElJd/qrO40=
 github.com/onsi/ginkgo/v2 v2.23.4 h1:ktYTpKJAVZnDT4VjxSbiBenUjmlL/5QkBEocaWXiQus=
 github.com/onsi/ginkgo/v2 v2.23.4/go.mod h1:Bt66ApGPBFzHyR+JO10Zbt0Gsp4uWxu5mIOTusL46e8=
 github.com/onsi/gomega v1.38.0 h1:c/WX+w8SLAinvuKKQFh77WEucCnPk4j2OTUr7lt7BeY=
@@ -260,6 +256,10 @@ sigs.k8s.io/controller-runtime v0.22.4 h1:GEjV7KV3TY8e+tJ2LCTxUTanW4z/FmNB7l327U
 sigs.k8s.io/controller-runtime v0.22.4/go.mod h1:+QX1XUpTXN4mLoblf4tqr5CQcyHPAki2HLXqQMY6vh8=
 sigs.k8s.io/json v0.0.0-20241014173422-cfa47c3a1cc8 h1:gBQPwqORJ8d8/YNZWEjoZs7npUVDpVXUUOFfW6CgAqE=
 sigs.k8s.io/json v0.0.0-20241014173422-cfa47c3a1cc8/go.mod h1:mdzfpAEoE6DHQEN0uh9ZbOCuHbLK5wOm7dK4ctXE9Tg=
+sigs.k8s.io/multicluster-runtime v0.22.4-beta.1 h1:0XWbDINepM9UOyLkqhG4g7BtGBFKCDvZFyPsw1vufKE=
+sigs.k8s.io/multicluster-runtime v0.22.4-beta.1/go.mod h1:zSMb4mC8MAZK42l8eE1ywkeX6vjuNRenYzJ1w+GPdfI=
+sigs.k8s.io/multicluster-runtime/providers/file v0.22.4-beta.1 h1:EvFzMBZPwg6QIfbugtb8XUZP54ss8DpcIQdZLzdr1ow=
+sigs.k8s.io/multicluster-runtime/providers/file v0.22.4-beta.1/go.mod h1:k3F3H3ErX1Xkv46Qr1VHg14awhMb+9D8rIi/F35aUdA=
 sigs.k8s.io/randfill v1.0.0 h1:JfjMILfT8A6RbawdsK2JXGBR5AQVfd+9TbzrlneTyrU=
 sigs.k8s.io/randfill v1.0.0/go.mod h1:XeLlZ/jmk4i1HRopwe7/aU3H5n1zNUcX6TM94b3QxOY=
 sigs.k8s.io/structured-merge-diff/v6 v6.3.0 h1:jTijUJbW353oVOd9oTlifJqOGEkUw2jB/fXCbTiQEco=
