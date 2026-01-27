@@ -53,7 +53,7 @@ jobs:
         run: mkdir -p ${{ github.workspace }}/tmp
 
       - name: Running example
-        uses: ntnn/mdextract@v0.1.0
+        uses: ntnn/mdextract@ae39e0ef04c094b0fc7f8cffba82c73b0527d64a # v0.1.0
         env:
           TMPDIR: ${{ github.workspace }}/tmp
         with:
