@@ -74,8 +74,11 @@ linters:
         text: "var-naming" # yeah, utils is a bandaid
   settings:
     goheader:
+      values:
+        const:
+          AUTHORS: The Platform Mesh Authors
       template: |-
-        Copyright {{YEAR}}.
+        Copyright {{ AUTHORS }}.
         SPDX-License-Identifier: Apache-2.0
 
         Licensed under the Apache License, Version 2.0 (the "License");
