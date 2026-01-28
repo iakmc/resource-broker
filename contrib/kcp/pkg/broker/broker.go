@@ -26,8 +26,9 @@ import (
 	"sync"
 
 	"github.com/go-logr/logr"
-	kcpapisv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/apis/v1alpha1"
 	"github.com/kcp-dev/multicluster-provider/apiexport"
+	kcpapisv1alpha1 "github.com/kcp-dev/sdk/apis/apis/v1alpha1"
+	kcpapisv1alpha2 "github.com/kcp-dev/sdk/apis/apis/v1alpha2"
 	"golang.org/x/sync/errgroup"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -144,6 +145,9 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 		return nil, fmt.Errorf("unable to add broker v1alpha1 to acceptapi scheme: %w", err)
 	}
 	if err := kcpapisv1alpha1.AddToScheme(acceptAPIScheme); err != nil {
+		return nil, fmt.Errorf("unable to add kcp apis to acceptapi scheme: %w", err)
+	}
+	if err := kcpapisv1alpha2.AddToScheme(acceptAPIScheme); err != nil {
 		return nil, fmt.Errorf("unable to add kcp apis to acceptapi scheme: %w", err)
 	}
 	if err := clientgoscheme.AddToScheme(acceptAPIScheme); err != nil {
@@ -315,6 +319,9 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 	// produces consumer clusters.
 	brokerAPIScheme := runtime.NewScheme()
 	if err := kcpapisv1alpha1.AddToScheme(brokerAPIScheme); err != nil {
+		return nil, fmt.Errorf("unable to add kcp apis to acceptapi scheme: %w", err)
+	}
+	if err := kcpapisv1alpha2.AddToScheme(brokerAPIScheme); err != nil {
 		return nil, fmt.Errorf("unable to add kcp apis to broker api scheme: %w", err)
 	}
 	brokerAPIs, err := apiexport.New(opts.KcpConfig, opts.BrokerAPIName, apiexport.Options{

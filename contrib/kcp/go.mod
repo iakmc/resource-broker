@@ -6,8 +6,8 @@ replace github.com/platform-mesh/resource-broker => ../..
 
 require (
 	github.com/go-logr/logr v1.4.3
-	github.com/kcp-dev/kcp/sdk v0.28.3
 	github.com/kcp-dev/multicluster-provider v0.4.0
+	github.com/kcp-dev/sdk v0.29.0
 	github.com/platform-mesh/resource-broker v0.0.0-00010101000000-000000000000
 	golang.org/x/sync v0.19.0
 	k8s.io/api v0.35.0
@@ -42,7 +42,6 @@ require (
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/kcp-dev/apimachinery/v2 v2.29.1-0.20251209121225-cf3c0b624983 // indirect
 	github.com/kcp-dev/logicalcluster/v3 v3.0.5 // indirect
-	github.com/kcp-dev/sdk v0.28.1-0.20251209130449-436a0347809b // indirect
 	github.com/mailru/easyjson v0.9.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
