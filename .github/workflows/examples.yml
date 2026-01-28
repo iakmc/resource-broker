@@ -49,21 +49,15 @@ jobs:
           # will be created as needed in the examples.
           install_only: true
 
-      - name: Ensure TMPDIR exists
-        run: mkdir -p ${{ github.workspace }}/tmp
-
       - name: Running example
-        uses: ntnn/mdextract@ae39e0ef04c094b0fc7f8cffba82c73b0527d64a # v0.1.0
-        env:
-          TMPDIR: ${{ github.workspace }}/tmp
+        uses: ntnn/mdextract@v0.2.0
         with:
           input: ./examples/${{ matrix.example }}/README.md
-          output: "$TMPDIR/${{ matrix.example }}.bash"
+          output: run.bash
           language: bash
+          exclude-tags: noci
 
-      - run: bash "$TMPDIR/${{ matrix.example }}.bash"
-        env:
-          TMPDIR: ${{ github.workspace }}/tmp
+      - run: bash -xe run.bash
 
       - name: Upload logs on failure
         if: failure()

@@ -121,7 +121,7 @@ sequenceDiagram
 
 4. (Optional) Clean up resources created during the example
 
-```bash
+```bash noci
 ./examples/certs/run.bash cleanup
 ./examples/certs/run.bash stop-broker
 ```
