@@ -2,5 +2,11 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "local>platform-mesh/.github:renovate-config"
+  ],
+  "packageRules": [
+    {
+      "matchPackageNames": ["github.com/platform-mesh/resource-broker"],
+      "enabled": false
+    }
   ]
 }
