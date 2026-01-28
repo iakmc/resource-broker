@@ -5,8 +5,7 @@
   ],
   "packageRules": [
     {
-      "matchManagers": ["gomod"],
-      "matchDepTypes": ["replace"],
+      "matchPackageNames": ["github.com/platform-mesh/resource-broker"],
       "enabled": false
     }
   ]
