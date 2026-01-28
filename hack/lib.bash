@@ -353,8 +353,10 @@ kubectl::krew::setup() {
 
 kcp::setup::plugins() {
     kubectl::krew::setup
-    kubectl krew index add kcp-dev https://github.com/kcp-dev/krew-index.git \
-        || die "Failed to add kcp-dev krew index"
+    if ! kubectl krew index list | grep -q "^kcp-dev"; then
+        kubectl krew index add kcp-dev https://github.com/kcp-dev/krew-index.git \
+            || die "Failed to add kcp-dev krew index"
+    fi
     kubectl krew install kcp-dev/kcp \
         || die "Failed to install kcp krew plugin"
     kubectl krew install kcp-dev/ws \

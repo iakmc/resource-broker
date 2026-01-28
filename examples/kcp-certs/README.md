@@ -65,6 +65,11 @@ platform to use.
 
 <!-- TODO: This hackery could be too complex for new users. -->
 
+<!--
+# Adding krew to PATH early for all subsequent commands
+export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"
+-->
+
 ## Running the Example
 
 1. Setup the kind clusters and install components
@@ -96,7 +101,7 @@ another provider.
 
 4. (Optional) Clean up resources created during the example
 
-```bash
+```bash noci
 ./examples/certs/run.bash cleanup
 ./examples/certs/run.bash stop-broker
 ```
