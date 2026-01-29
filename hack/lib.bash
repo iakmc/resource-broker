@@ -87,10 +87,68 @@ kubectl::kustomize() {
 kubectl::wait() {
     local kubeconfig="$1"
     local resource="$2"
-    local for="$3"
+    local namespace="$3"
+    local for="$4"
 
-    kubectl --kubeconfig "$kubeconfig" wait --for="$for" "$resource" --timeout="$timeout" \
-        || die "Timed out waiting for $condition on $resource in cluster with kubeconfig $kubeconfig"
+    kubectl --kubeconfig "$kubeconfig" wait --for="$for" "$resource" --timeout="$timeout" --namespace="$namespace" \
+        || die "Timed out waiting for $for on $resource in cluster with kubeconfig $kubeconfig"
+}
+
+kubectl::wait::suffix() {
+    local kubeconfig="$1"
+    local resource="$2"
+    local namespace="$3"
+    local jsonpath="$4"
+    local suffix="$5"
+
+    kubectl::wait "$kubeconfig" "$resource" "$namespace" jsonpath="{$jsonpath}"
+
+    local value="$(kubectl --kubeconfig "$kubeconfig" get "$resource" -n "$namespace" -o "jsonpath={$jsonpath}")"
+    local retry_count=0
+    local max_retries=360
+    while [[ "$value" != *"$suffix" ]]; do
+        log "Current $jsonpath is '$value', waiting for suffix '$suffix'"
+        retry_count=$((retry_count + 1))
+        if [[ $retry_count -ge $max_retries ]]; then
+            die "Timed out waiting for correct suffix in $kubeconfig"
+        fi
+        sleep 1
+        value="$(kubectl --kubeconfig "$kubeconfig" get "$resource" -n "$namespace" -o "jsonpath={$jsonpath}")"
+    done
+    log "Found expected suffix '$suffix'"
+}
+
+kubectl::secret::debase64() {
+    local kubeconfig="$1"
+    local resource="$2"
+    local namespace="$3"
+    local jsonpath="$4"
+
+    # redirect to stderr to not pollute the output
+    kubectl::wait "$kubeconfig" "secret/$resource" "$namespace" jsonpath="{$jsonpath}" >&2
+    kubectl --kubeconfig "$kubeconfig" get secret "$resource" -n "$namespace" -o "jsonpath={$jsonpath}" | base64 -d
+}
+
+kubectl::wait::cert::subject() {
+    local kubeconfig="$1"
+    local resource="$2"
+    local namespace="$3"
+    local expected_subject="$4"
+    shift 4
+
+    local subject="$(kubectl::secret::debase64 "$kubeconfig" "$resource" "$namespace" ".data.tls\.crt" | openssl x509 -noout -subject)"
+    local retry_count=0
+    local max_retries=360
+    while [[ "$subject" != *"$expected_subject"* ]]; do
+        log "Current subject is '$subject', waiting for '$expected_subject'"
+        retry_count=$((retry_count + 1))
+        if [[ $retry_count -ge $max_retries ]]; then
+            die "Timed out waiting for correct certificate in $kubeconfig"
+        fi
+        sleep 1
+        subject="$(kubectl::secret::debase64 "$kubeconfig" "$resource" "$namespace" ".data.tls\.crt" | openssl x509 -noout -subject)"
+    done
+    log "Found expected subject '$expected_subject'"
 }
 
 kubectl::wait::not_empty() {

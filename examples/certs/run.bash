@@ -117,75 +117,6 @@ _stop_broker() {
     kubectl::delete "$kind_platform" deployment/resource-broker
 }
 
-_cn_from_secret() {
-    local kubeconfig="$1"
-    local resource="$2"
-
-    local subject="$(kubectl --kubeconfig "$kubeconfig" get secret "$resource" -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -subject)"
-    echo "$subject"
-}
-
-_wait_for_subject() {
-    local kubeconfig="$1"
-    local resource="$2"
-    local expected_subject="$3"
-
-    local subject="$(_cn_from_secret "$kubeconfig" "$resource")"
-    local retry_count=0
-    local max_retries=360
-    while [[ "$subject" != *"$expected_subject"* ]]; do
-        log "Current subject is '$subject', waiting for '$expected_subject'"
-        retry_count=$((retry_count + 1))
-        if [[ $retry_count -ge $max_retries ]]; then
-            die "Timed out waiting for correct certificate in $kubeconfig"
-        fi
-        sleep 1
-        subject="$(_cn_from_secret "$kubeconfig" "$resource")"
-    done
-    log "Found expected subject '$expected_subject'"
-}
-
-_run_example() {
-    log "Requesting certificate in consumer"
-    kubectl::apply "$kind_consumer" "$example_dir/consumer/cert.yaml"
-
-    log "Waiting for certificate to appear in internalca"
-    kubectl::wait "$kind_internalca" certificates.example.platform-mesh.io/cert-from-consumer create
-    kubectl::wait "$kind_internalca" certificates.cert-manager.io/cert-from-consumer create
-
-    log "Waiting for certificate to become ready in internal"
-    kubectl::wait "$kind_internalca" certificates.cert-manager.io/cert-from-consumer condition=Ready
-
-    log "Verifying certificate is not in externalca"
-    if kubectl --kubeconfig "$kind_externalca" get certificates.example.platform-mesh.io/cert-from-consumer &>/dev/null; then
-        die "Certificate should not be present in externalca"
-    fi
-
-    log "Wait for secrets to appear in consumer"
-    kubectl::wait "$kind_consumer" secrets/cert-from-consumer create
-
-    log "Verify FQDN in secret"
-    _wait_for_subject "$kind_consumer" "cert-from-consumer" "app.internal.corp"
-
-    log "Change Certificate in consumer to request external certificate"
-    kubectl --kubeconfig "$kind_consumer" patch certificates.example.platform-mesh.io/cert-from-consumer \
-        --type merge -p '{"spec":{"fqdn":"app.corp.com"}}' \
-        || die "Failed to patch Certificate in consumer"
-
-    log "Waiting for Certificate to appear in externalca"
-    kubectl::wait "$kind_externalca" certificates.example.platform-mesh.io/cert-from-consumer create
-    kubectl::wait "$kind_externalca" certificates.cert-manager.io/cert-from-consumer create
-
-    log "Waiting for Certificate to become ready in external"
-    kubectl::wait "$kind_externalca" certificates.cert-manager.io/cert-from-consumer condition=Ready
-
-    log "Wait for secret in consumer to be updated"
-    _wait_for_subject "$kind_consumer" "cert-from-consumer" "app.corp.com"
-
-    log "Wait for Certificate to vanish from db"
-    kubectl::wait "$kind_internalca" certificates.example.platform-mesh.io/cert-from-consumer delete
-}
-
 _cleanup() {
     kubectl::delete "$kind_consumer" \
         certificates.example.platform-mesh.io/cert-from-consumer \
@@ -209,7 +140,6 @@ case "$1" in
     (cleanup) _cleanup ;;
     (start-broker) _start_broker ;;
     (stop-broker) _stop_broker ;;
-    (run-example) _run_example ;;
     ("")
         _setup || die "Setup failed"
         _start_broker || die "Starting broker failed"

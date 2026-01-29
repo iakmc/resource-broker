@@ -122,7 +122,7 @@ _provider_setup_new() {
     helm::install::certmanager "$kind_kubeconfig"
     # Installing the same resources as in the non-kcp example
     kubectl::kustomize "$kind_kubeconfig" "$example_dir/$name"
-    kubectl::wait "$kind_kubeconfig" rgd/certificates.example.platform-mesh.io condition=Ready
+    kubectl::wait "$kind_kubeconfig" rgd/certificates.example.platform-mesh.io "" condition=Ready
 
     log "Setting up api-syncagent in $name kind cluster"
 
@@ -259,19 +259,6 @@ _stop_broker() {
     kubectl::delete "$kind_platform" deployment/resource-broker
 }
 
-_provider_ann() {
-    local kubeconfig="$1"
-    local resource="$2"
-    kubectl --kubeconfig "$kubeconfig" get "$resource" \
-        -o jsonpath='{.metadata.annotations.broker\.platform-mesh\.io/provider-cluster}'
-}
-
-_cn_from_cert_secret() {
-    local kubeconfig="$1"
-    local secret_name="$2"
-    kubectl --kubeconfig "$kubeconfig" get secret "$secret_name" -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -subject
-}
-
 _wait_for_provider_annotation() {
     local kubeconfig="$1"
     local resource="$2"
@@ -279,46 +266,16 @@ _wait_for_provider_annotation() {
     local expected_fqdn="$4"
 
     log "Wait for provider annotation on $resource to be set to $expected_cluster_id"
-    local try_count=0
-    local max_retries=120
-    local current_cluster_id="$(_provider_ann "$kubeconfig" "$resource")"
-    until [[ "$current_cluster_id" == *"$expected_cluster_id" ]]; do
-        log "$resource not yet annotated with provider cluster, current value: $current_cluster_id"
-        try_count=$((try_count + 1))
-        if [[ "$try_count" -ge "$max_retries" ]]; then
-            die "Timed out waiting for $resource to be annotated with provider cluster '$expected_cluster_id': $current_cluster_id"
-        fi
-        sleep 1
-        current_cluster_id="$(_provider_ann "$kubeconfig" "$resource")"
-    done
-    log "$resource annotated with provider cluster: $current_cluster_id"
+    kubectl::wait::suffix "$kubeconfig" "$resource" default \
+        ".metadata.annotations.broker\.platform-mesh\.io/provider-cluster" \
+        "$expected_cluster_id"
 
-    local name_try_count=0
-    local secret_try_count=0
-    until [[ "$secret_try_count" -ge "$max_retries" ]]; do
-        local secret_name="$(kubectl --kubeconfig "$kubeconfig" get certificates cert-from-consumer -o jsonpath='{.status.relatedResources.secret.name}')"
-        if [[ -z "$secret_name" ]]; then
-            name_try_count=$((name_try_count + 1))
-            log "Certificate secret name not yet set, waiting..."
-            kubectl --kubeconfig "$kubeconfig" get certificates cert-from-consumer -o yaml
-            if [[ "$name_try_count" -ge "$max_retries" ]]; then
-                die "Timed out waiting for certificate secret name to be set"
-            fi
-            sleep 1
-            continue
-        fi
+    kubectl::wait "$kubeconfig" "certificates/cert-from-consumer" default \
+        jsonpath='{.status.relatedResources.secret.name}'
 
-        log "Secret with issued certificate: $secret_name"
-        local cn="$(_cn_from_cert_secret "$kubeconfig" "$secret_name")"
-        if [[ "$cn" == *"$expected_fqdn"* ]]; then
-            log "Certificate CN has expected fqdn '$expected_fqdn': $cn"
-            return 0
-        fi
-        log "Certificate not yet issued, waiting..."
-        secret_try_count=$((secret_try_count + 1))
-        sleep 1
-    done
-    die "Timed out waiting for certificate to be issued with expected fqdn '$expected_fqdn'"
+    local secret_name="$(kubectl --kubeconfig "$kubeconfig" get certificates cert-from-consumer -o jsonpath='{.status.relatedResources.secret.name}')"
+
+    kubectl::wait::cert::subject "$kubeconfig" "$secret_name" default "$expected_fqdn"
 }
 
 _run_example() {
