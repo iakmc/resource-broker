@@ -50,7 +50,7 @@ jobs:
           install_only: true
 
       - name: Running example
-        uses: ntnn/mdextract@v0.2.0
+        uses: ntnn/mdextract@bf2cdf9dbc2c84231ed52bd1470be928f3106166 # v0.2.0
         with:
           input: ./examples/${{ matrix.example }}/README.md
           output: run.bash
