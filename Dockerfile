@@ -13,7 +13,7 @@ RUN --mount=type=cache,target=/go/pkg/mod/ \
     GOCACHE=/root/.cache/go-build \
     GOOS=$TARGETOS \
     GOARCH=$TARGETARCH \
-    make build
+    go build -o ./bin/manager ./cmd
 
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /

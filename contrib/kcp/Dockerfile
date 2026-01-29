@@ -6,6 +6,11 @@ COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download && go mod verify
 
+COPY contrib/kcp/go.mod contrib/kcp/go.sum ./contrib/kcp/
+RUN --mount=type=cache,target=/go/pkg/mod \
+    cd contrib/kcp && \
+    go mod download && go mod verify
+
 COPY . ./
 RUN --mount=type=cache,target=/go/pkg/mod/ \
     --mount=type=cache,target=/root/.cache/go-build \
@@ -14,7 +19,7 @@ RUN --mount=type=cache,target=/go/pkg/mod/ \
     GOCACHE=/root/.cache/go-build \
     GOOS=$TARGETOS \
     GOARCH=$TARGETARCH \
-    go build -o ../.././bin/kcp-manager ./cmd
+    go build -o ../../bin/kcp-manager ./cmd
 
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
