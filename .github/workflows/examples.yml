@@ -50,11 +50,11 @@ jobs:
           install_only: true
 
       - name: Running example
-        uses: ntnn/mdextract@bf2cdf9dbc2c84231ed52bd1470be928f3106166 # v0.2.0
+        uses: ntnn/mdextract@e5a8798e279b2287fce907b7526dccf90ceeb8f7 # v0.3.0
         with:
           input: ./examples/${{ matrix.example }}/README.md
           output: run.bash
-          language: bash
+          tags: bash
           exclude-tags: noci
 
       - run: bash -xe run.bash
