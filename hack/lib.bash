@@ -90,8 +90,29 @@ kubectl::wait() {
     local namespace="$3"
     local for="$4"
 
+    kubectl --kubeconfig "$kubeconfig" wait --for="create" "$resource" --timeout="$timeout" --namespace="$namespace" \
+        || die "Timed out waiting for creation of $resource in cluster with kubeconfig $kubeconfig"
     kubectl --kubeconfig "$kubeconfig" wait --for="$for" "$resource" --timeout="$timeout" --namespace="$namespace" \
         || die "Timed out waiting for $for on $resource in cluster with kubeconfig $kubeconfig"
+}
+
+kubectl::wait::_list() {
+    local kubeconfig="$1"
+    local resource="$2"
+    shift 2
+    kubectl --kubeconfig "$kubeconfig" get "$resource" "$@" -o json | jq '.items | length'
+}
+
+kubectl::wait::list() {
+    local retry_count=0
+    local max_retries=360
+    while [[ "$(kubectl::wait::_list "$@")" -eq 0 ]] ; do
+        retry_count=$((retry_count + 1))
+        if [[ $retry_count -ge $max_retries ]]; then
+            die "Timed out waiting for any resources '$resource' in '$namespace': $kubeconfig"
+        fi
+        sleep 1
+    done
 }
 
 kubectl::wait::suffix() {

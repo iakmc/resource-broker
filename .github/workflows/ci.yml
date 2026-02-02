@@ -80,6 +80,7 @@ jobs:
             ./docker-bake.hcl
             cwd://${{ steps.meta.outputs.bake-file }}
           targets: default
-          push: true
+          # Only try to push if this is a push event (on a branch) or if the PR is from the same repository
+          push: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

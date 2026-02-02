@@ -401,7 +401,7 @@ subject=CN=app.corp.com
 
 Or delete the clusters:
 
-```bash
+```bash noci
 kind delete cluster --name broker-platform
 kind delete cluster --name broker-consumer
 kind delete cluster --name broker-internalca
