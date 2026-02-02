@@ -1,16 +1,15 @@
-# Certificate Brokering with kcp Example
+# Brokering Certificates with kcp
 
-This example extends the [certs example](../certs/README.md) by using [kcp](https://kcp.io/) (Kubernetes-like Control Plane) for communication between providers and consumers instead of direct multi-cluster access.
-
-> **Prerequisites:** This guide assumes familiarity with the [certs example](../certs/README.md). Please read that documentation first to understand the core concepts of certificate brokering, AcceptAPIs, and resource synchronization.
+This example uses resource-broker to broker Certificate resources from
+a consumer to matching providers, utilizing the isolation and API
+sharing capabilities of [kcp](https://kcp.io/).
 
 ## Overview
 
 While the basic certs example uses direct kubeconfig access to multiple clusters, this example introduces kcp as a control plane layer that:
 
 1. Uses kcp workspaces to isolate consumers and providers
-2. Shares APIs between workspaces using APIExports and APIBindings
-   instead of installing CRDs manually
+2. Shares APIs between workspaces using APIExports and APIBindings instead of installing CRDs manually
 3. Synchronizes resources between kcp workspaces and compute clusters using [api-syncagent](https://docs.kcp.io/api-syncagent/main/)
 
 ## Prerequisites
@@ -26,7 +25,11 @@ While the basic certs example uses direct kubeconfig access to multiple clusters
 - [kcp kubectl plugins](https://docs.kcp.io/kcp/main/setup/kubectl-plugin/)
 
 <!--
-TODO: Install kubectl plugins locally via e.g. uget
+TODO(ntnn): Install kubectl plugins locally via e.g. uget
+For now just add the krew bin folder to path
+```bash ci
+export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"
+```
 -->
 
 ## Components
@@ -37,8 +40,8 @@ The platform cluster hosts kcp and the resource-broker.
 
 #### Platform kcp Workspace
 
-The platform kcp workspace export the AcceptAPI for providers and the generic
-Certificate API for consumers.
+The platform kcp workspace exports the AcceptAPI for providers and the
+generic Certificate API for consumers.
 
 ### Consumer kcp Workspace
 
@@ -66,38 +69,511 @@ platform to use.
 <!-- TODO: This hackery could be too complex for new users. -->
 
 <!--
-# Adding krew to PATH early for all subsequent commands
-export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"
+```bash ci
+# source the library so ci can use the functions
+source ./hack/lib.bash
+```
 -->
 
 ## Running the Example
 
-1. Setup the kind clusters and install components
+### Setup
 
-```bash
+Setup the kind clusters and install components (kcp, cert-manager, etcd, ...).
+Kubeconfig files for clusters and workspaces will be created in the `./kubeconfigs/` directory.
+
+The setup also creates two APIExports in the platform workspace:
+
+1. AcceptAPI, which providers bind to declare which APIs they can serve
+   and under which constraints
+2. Certificate API, which consumers bind to create Certificate resources
+
+The resource-broker routes Certificate resources from consumers to
+a provider depending on the constraints declared by the providers.
+
+```bash ci
 ./examples/kcp-certs/run.bash setup
 ```
 
-2. Build and start the resource-broker in the platform cluster
+Build and start the resource-broker in the platform cluster:
 
-```bash
+<!-- TODO(ntnn): use operator and prebuilt docker image and include in the setup -->
+```bash ci
 ./examples/kcp-certs/run.bash start-broker
 ```
 
-3. Run the example scenario
+> [!NOTE]
+> At any point you can run `./examples/kcp-certs/run.bash cleanup` to get back to this state.
+
+### Example
+
+#### Setting up Providers
+
+The setup script already deployed api-syncagent to publish APIs from the
+provider clusters to their respective kcp workspaces.
+
+Now bind the AcceptAPI from the platform workspace into the internalca provider workspace:
+
+```bash ci
+kubectl kcp bind apiexport root:platform:acceptapis \
+    --kubeconfig kubeconfigs/workspaces/internalca.kubeconfig \
+    --accept-permission-claim secrets.core \
+    --accept-permission-claim events.core \
+    --accept-permission-claim namespaces.core
+```
+
+And do the same for the externalca provider workspace:
+
+```bash ci
+kubectl kcp bind apiexport root:platform:acceptapis \
+    --kubeconfig kubeconfigs/workspaces/externalca.kubeconfig \
+    --accept-permission-claim secrets.core \
+    --accept-permission-claim events.core \
+    --accept-permission-claim namespaces.core
+```
+
+And now create AcceptAPI resources in both provider workspaces.
+
+The internalca provider will accept Certificate resources with `spec.fqdn` ending with `internal.corp`:
+
+<!--
+TODO(ntnn): replace the annotation with giving the resource-broker
+service account access properly using RBAC.
+Maybe let resource-broker bind the APIExport from the provider when
+reconciling the AcceptAPI?
+-->
+
+```bash ci
+kubectl --kubeconfig kubeconfigs/workspaces/internalca.kubeconfig apply -f- <<EOF
+apiVersion: broker.platform-mesh.io/v1alpha1
+kind: AcceptAPI
+metadata:
+  annotations:
+    broker.platform-mesh.io/secret-name: kubeconfig-internalca
+  name: acceptapis.broker.platform-mesh.io
+spec:
+  filters:
+  - key: fqdn
+    suffix: internal.corp
+  gvr:
+    group: example.platform-mesh.io
+    resource: certificates
+    version: v1alpha1
+EOF
+```
+
+Currently providers bind their own APIExport to get a virtual workspace
+and build a kubeconfig for the resource-broker to use. This kubeconfig
+is stored in a secret in their workspaces, which in turn is made
+accessible with a permission claim on the AcceptAPI binding.
+
+The annotation `broker.platform-mesh.io/secret-name` tells the
+resource-broker which secret to read the kubeconfig from.
+
+Now create the AcceptAPI for the externalca provider, which will
+accept Certificate resources with `spec.fqdn` ending with `corp.com`:
+
+```bash ci
+kubectl --kubeconfig kubeconfigs/workspaces/externalca.kubeconfig apply -f- <<EOF
+apiVersion: broker.platform-mesh.io/v1alpha1
+kind: AcceptAPI
+metadata:
+  annotations:
+    broker.platform-mesh.io/secret-name: kubeconfig-externalca
+  name: acceptapis.broker.platform-mesh.io
+spec:
+  filters:
+  - key: fqdn
+    suffix: corp.com
+  gvr:
+    group: example.platform-mesh.io
+    resource: certificates
+    version: v1alpha1
+EOF
+```
+
+With the providers set up resource-broker can now route Certificate
+resources from consumers.
+
+#### Consumer binding the generic Certificate API
+
+resource-broker uses kcp's [API exporting and binding](https://docs.kcp.io/kcp/v0.29/concepts/apis/exporting-apis/) to implement generic APIs.
+
+The generic APIs defined by the platform are exported using [APIExports](https://docs.kcp.io/kcp/v0.29/reference/crd/apis.kcp.io/apiexports/). Consumers can bind these APIs into their own workspaces using [APIBindings](https://docs.kcp.io/kcp/v0.29/reference/crd/apis.kcp.io/apibindings/).
+
+Checking the available APIs in the consumer workspace there are no
+Certificates available yet:
 
 ```bash
-./examples/kcp-certs/run.bash run-example
+kubectl --kubeconfig="./kubeconfigs/workspaces/consumer.kubeconfig" api-resources --api-group example.platform-mesh.io
 ```
 
 <!--
-TODO: Split up run-example into smaller steps to show them here with explanations.
+```bash ci
+if kubectl --kubeconfig="./kubeconfigs/workspaces/consumer.kubeconfig" api-resources --api-group example.platform-mesh.io | grep -q Certificate; then
+    echo "Certificate API should not be available yet"
+    exit 1
+fi
+```
 -->
 
-Similar to the certs example, this creates a Certificate in the consumer
-workspace, waits until it is provisioned by the resource-broker through
-one of the providers, and then modifies it to trigger a migration to
-another provider.
+Now bind the certificate APIExport from the platform workspace into the consumer workspace:
+
+```bash ci
+kubectl kcp bind apiexport root:platform:certificates \
+    --kubeconfig="./kubeconfigs/workspaces/consumer.kubeconfig" \
+    --accept-permission-claim secrets.core \
+    --accept-permission-claim events.core \
+    --accept-permission-claim namespaces.core
+```
+
+This will create an APIBinding in the consumer workspace:
+
+```bash ci
+kubectl --kubeconfig="./kubeconfigs/workspaces/consumer.kubeconfig" get apibindings certificates -o yaml
+```
+
+Running `kubectl kcp bind apiexport ...` is equivalent to just applying
+this manifest:
+
+```yaml
+apiVersion: apis.kcp.io/v1alpha2
+kind: APIBinding
+metadata:
+  name: certificates
+spec:
+  reference:
+    export:
+      name: certificates
+      path: root:platform
+  permissionClaims:
+  - group: ""
+    identityHash: ""
+    resource: secrets
+    selector:
+      matchAll: true
+    state: Accepted
+    verbs:
+    - '*'
+  - group: ""
+    identityHash: ""
+    resource: events
+    selector:
+      matchAll: true
+    state: Accepted
+    verbs:
+    - '*'
+  - group: ""
+    identityHash: ""
+    resource: namespaces
+    selector:
+      matchAll: true
+    state: Accepted
+    verbs:
+    - '*'
+```
+
+In automated deployments the manifest is the way to go. The CLI is
+merely a convenience as it builds the manifest and waits for the binding
+to be ready.
+
+After binding the Certificate resource is available in the consumer workspace:
+
+```bash ci
+kubectl --kubeconfig="./kubeconfigs/workspaces/consumer.kubeconfig" api-resources --api-group example.platform-mesh.io
+```
+
+<!--
+```bash ci
+if kubectl --kubeconfig="./kubeconfigs/workspaces/consumer.kubeconfig" api-resources --api-group example.plastform-mesh.io | grep -q Certificate; then
+    echo "Certificate API should not be available yet"
+    exit 1
+fi
+```
+-->
+
+#### Ordering a Certificate
+
+Create a Certificate resource in the consumer workspace:
+
+```yaml
+apiVersion: example.platform-mesh.io/v1alpha1
+kind: Certificate
+metadata:
+  name: cert-from-consumer
+spec:
+  fqdn: app.internal.corp
+```
+
+```bash ci
+kubectl --kubeconfig="./kubeconfigs/workspaces/consumer.kubeconfig" apply -f ./examples/kcp-certs/cert.yaml
+```
+
+The resource-broker will see the Certificate in the virtual workspace of the APIExport, pass it to a matching provider. Since the fqdn is `app.internal.corp` the InternalCA provider will issue the certificate:
+
+<!--
+```bash ci
+kubectl::wait::list \
+    kubeconfigs/internalca.kubeconfig \
+    certificates.example.platform-mesh.io \
+    --all-namespaces -l kro.run/owned=true
+```
+-->
+
+
+```bash ci
+kubectl --kubeconfig kubeconfigs/internalca.kubeconfig get certificates.example.platform-mesh.io --all-namespaces
+```
+
+For synchronisation api-syncagent is used, which uses the cluster IDs and hashes to uniquely name the resources:
+
+```
+NAMESPACE          NAME                                        STATE    SYNCED   AGE
+9n832d7e4xebepg1   2747cabbb481a433679f-42b4d6246cf320c6cee5   ACTIVE   True     10m
+```
+
+```bash ci
+kubectl --kubeconfig kubeconfigs/internalca.kubeconfig get certificates.example.platform-mesh.io --all-namespaces -o yaml
+```
+
+```yaml
+apiVersion: v1
+items:
+- apiVersion: example.platform-mesh.io/v1alpha1
+  kind: Certificate
+  metadata:
+    # ...
+    name: 2747cabbb481a433679f-42b4d6246cf320c6cee5
+    namespace: 9n832d7e4xebepg1
+    # ...
+  spec:
+    fqdn: app.internal.corp
+  status:
+    # ...
+    relatedResources:
+      secret:
+        gvk:
+          group: core
+          kind: Secret
+          version: v1
+        name: 2747cabbb481a433679f-42b4d6246cf320c6cee5
+        namespace: default
+    # ...
+kind: List
+metadata:
+  resourceVersion: ""
+```
+
+Grab the name and namespace:
+
+```bash ci
+secret_name="$(kubectl --kubeconfig kubeconfigs/internalca.kubeconfig get certificates.example.platform-mesh.io --all-namespaces -o jsonpath="{.items[0].metadata.name}")"
+secret_namespace="$(kubectl --kubeconfig kubeconfigs/internalca.kubeconfig get certificates.example.platform-mesh.io --all-namespaces -o jsonpath="{.items[0].metadata.namespace}")"
+```
+
+<!--
+Wait for the certificate to be issued.
+```bash ci
+kubectl::wait::cert::subject \
+    kubeconfigs/internalca.kubeconfig \
+    "$secret_name" \
+    "$secret_namespace" \
+    "app.internal.corp"
+```
+-->
+
+
+The provider has created a cert-manager Certificate, which in turn
+generated a Secret with the issued certificate:
+
+```bash ci
+kubectl --kubeconfig kubeconfigs/internalca.kubeconfig get secrets --namespace "$secret_namespace"
+```
+
+Decoding the `tls.crt` field shows the certificate was correctly issued for `app.internal.corp`:
+
+```bash ci
+kubectl --kubeconfig kubeconfigs/internalca.kubeconfig get secrets --namespace "$secret_namespace" "$secret_name" -o jsonpath="{.data.tls\.crt}" \
+    | base64 --decode \
+    | openssl x509 -noout -subject
+# subject=CN=app.internal.corp
+```
+
+The same secret is now also available in the consumer cluster:
+
+<!--
+Wait for the certificate secret to be synced:
+```bash ci
+kubectl::wait::cert::subject \
+    kubeconfigs/workspaces/consumer.kubeconfig \
+    "$secret_name" \
+    "default" \
+    "app.internal.corp"
+```
+-->
+
+```bash ci
+kubectl --kubeconfig kubeconfigs/workspaces/consumer.kubeconfig get secrets "$secret_name"
+```
+
+And comparing the serial number shows it's the same certificate:
+
+```bash ci
+kubectl --kubeconfig kubeconfigs/internalca.kubeconfig \
+    get secrets --namespace "$secret_namespace" "$secret_name" \
+        -o jsonpath="{.data.tls\.crt}" \
+    | base64 --decode \
+    | openssl x509 -noout -serial
+# serial=0E7311D15E34081A8F1FD7447F1FF4C7BC055238
+kubectl --kubeconfig kubeconfigs/workspaces/consumer.kubeconfig \
+    get secrets "$secret_name" \
+        -o jsonpath="{.data.tls\.crt}" \
+    | base64 --decode \
+    | openssl x509 -noout -serial
+# serial=0E7311D15E34081A8F1FD7447F1FF4C7BC055238
+```
+
+<!--
+Compare serials
+```bash ci
+internalca_serial="$(
+    kubectl --kubeconfig kubeconfigs/internalca.kubeconfig \
+        get secrets --namespace "$secret_namespace" "$secret_name" \
+            -o jsonpath="{.data.tls\.crt}" \
+        | base64 --decode \
+        | openssl x509 -noout -serial
+)"
+consumer_serial="$(
+    kubectl --kubeconfig kubeconfigs/workspaces/consumer.kubeconfig \
+        get secrets "$secret_name" \
+            -o jsonpath="{.data.tls\.crt}" \
+        | base64 --decode \
+        | openssl x509 -noout -serial
+)"
+if [ "$internalca_serial" != "$consumer_serial" ]; then
+    echo "Serials do not match between provider and consumer ($internalca_serial != $consumer_serial)"
+    exit 1
+fi
+```
+-->
+
+#### Switching providers
+
+Now update the Certificate to request a certificate for `app.corp.com`,
+which should be issued by the externalca provider.
+
+```bash ci
+kubectl --kubeconfig kubeconfigs/workspaces/consumer.kubeconfig \
+    patch certificates cert-from-consumer \
+        --type merge -p '{"spec":{"fqdn":"app.corp.com"}}'
+```
+
+Just like with the internalca provider, the Certificate shows up in the externalca provider cluster:
+
+```bash ci
+kubectl --kubeconfig kubeconfigs/externalca.kubeconfig \
+    get certificates.example.platform-mesh.io --all-namespaces
+```
+
+The internalca and externalca providers have the same setup, with KRO
+relaying the Certificate example resource to a cert-manager Certificate
+and back, so the secret name and namespace can be grabbed the same way:
+
+<!--
+```bash ci
+kubectl::wait::list \
+    kubeconfigs/externalca.kubeconfig \
+    certificates.example.platform-mesh.io \
+    --all-namespaces -l kro.run/owned=true
+```
+-->
+
+```bash ci
+secret_name="$(kubectl --kubeconfig kubeconfigs/externalca.kubeconfig get certificates.example.platform-mesh.io --all-namespaces -o jsonpath="{.items[0].metadata.name}")"
+secret_namespace="$(kubectl --kubeconfig kubeconfigs/externalca.kubeconfig get certificates.example.platform-mesh.io --all-namespaces -o jsonpath="{.items[0].metadata.namespace}")"
+```
+
+And decoding the `tls.crt` field shows the certificate was correctly issued for `app.corp.com`:
+
+```bash ci
+kubectl --kubeconfig kubeconfigs/externalca.kubeconfig \
+    get secrets --namespace "$secret_namespace" "$secret_name" \
+        -o jsonpath="{.data.tls\.crt}" \
+    | base64 --decode \
+    | openssl x509 -noout -subject
+# subject=CN=app.corp.com
+```
+
+<!--
+Wait for the certificate secret to be synced:
+```bash ci
+kubectl::wait::cert::subject \
+    kubeconfigs/workspaces/consumer.kubeconfig \
+    "$secret_name" \
+    "default" \
+    "app.corp.com"
+```
+-->
+
+And the secret in the consumer workspace has been updated accordingly:
+
+```bash ci
+kubectl --kubeconfig kubeconfigs/workspaces/consumer.kubeconfig \
+    get secrets "$secret_name" \
+        -o jsonpath="{.data.tls\.crt}" \
+    | base64 --decode \
+    | openssl x509 -noout -subject
+# subject=CN=app.corp.com
+```
+
+And again comparing the serial numbers, now with the certificate in the externalca cluster, shows it's the same certificate:
+
+```bash ci
+kubectl --kubeconfig kubeconfigs/externalca.kubeconfig \
+    get secrets --namespace "$secret_namespace" "$secret_name" \
+        -o jsonpath="{.data.tls\.crt}" \
+    | base64 --decode \
+    | openssl x509 -noout -serial
+# serial=204F68FCA700404CB7745D7A603BA5A28DC68E95
+kubectl --kubeconfig kubeconfigs/workspaces/consumer.kubeconfig \
+    get secrets "$secret_name" \
+        -o jsonpath="{.data.tls\.crt}" \
+    | base64 --decode \
+    | openssl x509 -noout -serial
+# serial=204F68FCA700404CB7745D7A603BA5A28DC68E95
+```
+
+<!--
+Compare serials
+```bash ci
+externalca_serial="$(
+    kubectl --kubeconfig kubeconfigs/externalca.kubeconfig \
+        get secrets --namespace "$secret_namespace" "$secret_name" \
+            -o jsonpath="{.data.tls\.crt}" \
+        | base64 --decode \
+        | openssl x509 -noout -serial
+)"
+# Not sure why but had failures here that the serial was still the old
+# serial even though the check further up already showed the changed
+# fqdn. I can only imagine that this was an edge case maybe?
+newconsumer_serial="$consumer_serial"
+while [ "$consumer_serial" = "$newconsumer_serial" ]; do
+    newconsumer_serial="$(
+        kubectl --kubeconfig kubeconfigs/workspaces/consumer.kubeconfig \
+            get secrets "$secret_name" \
+                -o jsonpath="{.data.tls\.crt}" \
+            | base64 --decode \
+            | openssl x509 -noout -serial
+    )"
+done
+if [ "$externalca_serial" != "$newconsumer_serial" ]; then
+    echo "Serials do not match between provider and consumer ($externalca_serial != $newconsumer_serial)"
+    exit 1
+fi
+```
+-->
+
+### Cleanup
 
 4. (Optional) Clean up resources created during the example
 
@@ -108,7 +584,7 @@ another provider.
 
 Or delete the clusters:
 
-```bash
+```bash noci
 kind delete cluster --name broker-platform
 kind delete cluster --name broker-internalca
 kind delete cluster --name broker-externalca

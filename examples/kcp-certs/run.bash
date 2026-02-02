@@ -74,23 +74,6 @@ _setup() {
 
     log "Setting up consumer kcp workspace"
     kcp::create_workspace "$kubeconfigs/kcp-admin.kubeconfig" "$ws_consumer" "consumer"
-
-    log "Binding the Certificate API from platform"
-    kcp::apibinding "$ws_consumer" root:platform certificates \
-        secrets "" '*' \
-        events "" '*' \
-        namespaces "" '*'
-
-    local consumer_cluster_id="$(kubectl --kubeconfig "$ws_consumer" get logicalclusters.core.kcp.io cluster -o jsonpath='{.metadata.annotations.kcp\.io/cluster}')"
-    local service_endpoint_url="$(kubectl --kubeconfig "$ws_platform" get apiexportendpointslices certificates -o jsonpath='{.status.endpoints[0].url}')/clusters/$consumer_cluster_id"
-    cp "$ws_platform" "$vw_consumer"
-    yq -i ".clusters[].cluster.server = \"$service_endpoint_url\"" \
-        "$vw_consumer"
-    local old_hostname="$(kubeconfig::hostname "$vw_consumer")"
-    kubeconfig::hostname::set \
-        "$vw_consumer" \
-        "$old_hostname" \
-        "127.0.0.1:8443"
 }
 
 _cluster_id() {
@@ -162,29 +145,30 @@ _provider_setup_new() {
     # broker.
     kubectl::kubeconfig::secret "$ws_kubeconfig" "$ws_vw" "$name" "broker-platform-control-plane:32443"
 
-    # Bind the AcceptAPI from the platform workspace and instantiate it with
-    # the certificates resources.
-    kcp::apibinding "$ws_kubeconfig" root:platform acceptapis \
-        secrets "" get,list,watch \
-        events "" '*' \
-        namespaces "" '*'
+    # # Bind the AcceptAPI from the platform workspace and instantiate it with
+    # # the certificates resources.
+    # kcp::apibinding "$ws_kubeconfig" root:platform acceptapis \
+    #     secrets "" get,list,watch \
+    #     events "" '*' \
+    #     namespaces "" '*'
 
-    {
-        echo "apiVersion: broker.platform-mesh.io/v1alpha1"
-        echo "kind: AcceptAPI"
-        echo "metadata:"
-        echo "  name: acceptapis.broker.platform-mesh.io"
-        echo "  annotations:"
-        echo "    broker.platform-mesh.io/secret-name: kubeconfig-$name"
-        echo "spec:"
-        echo "  gvr:"
-        echo "    group: example.platform-mesh.io"
-        echo "    version: v1alpha1"
-        echo "    resource: certificates"
-        echo "  filters:"
-        echo "    - key: fqdn"
-        echo "      suffix: $suffix"
-    } | kubectl::apply "$ws_kubeconfig" "-"
+    # {
+    #     echo "apiVersion: broker.platform-mesh.io/v1alpha1"
+    #     echo "kind: AcceptAPI"
+    #     echo "metadata:"
+    #     echo "  name: acceptapis.broker.platform-mesh.io"
+    #     echo "  annotations:"
+    #     echo "    broker.platform-mesh.io/secret-name: kubeconfig-$name"
+    #     echo "spec:"
+    #     echo "  gvr:"
+    #     echo "    group: example.platform-mesh.io"
+    #     echo "    version: v1alpha1"
+    #     echo "    resource: certificates"
+    #     echo "  filters:"
+    #     echo "    - key: fqdn"
+    #     echo "      suffix: $suffix"
+    # } | kubectl::apply "$ws_kubeconfig" "-"
+
 }
 
 _start_broker() {
@@ -259,39 +243,6 @@ _stop_broker() {
     kubectl::delete "$kind_platform" deployment/resource-broker
 }
 
-_wait_for_provider_annotation() {
-    local kubeconfig="$1"
-    local resource="$2"
-    local expected_cluster_id="$3"
-    local expected_fqdn="$4"
-
-    log "Wait for provider annotation on $resource to be set to $expected_cluster_id"
-    kubectl::wait::suffix "$kubeconfig" "$resource" default \
-        ".metadata.annotations.broker\.platform-mesh\.io/provider-cluster" \
-        "$expected_cluster_id"
-
-    kubectl::wait "$kubeconfig" "certificates/cert-from-consumer" default \
-        jsonpath='{.status.relatedResources.secret.name}'
-
-    local secret_name="$(kubectl --kubeconfig "$kubeconfig" get certificates cert-from-consumer -o jsonpath='{.status.relatedResources.secret.name}')"
-
-    kubectl::wait::cert::subject "$kubeconfig" "$secret_name" default "$expected_fqdn"
-}
-
-_run_example() {
-    log "Order Certificate from internalca in consumer workspace"
-    kubectl::apply "$ws_consumer" "$example_dir/cert.yaml"
-
-    internalca_cluster_id="$(_cluster_id "$ws_internalca" apiexportendpointslices/certificates)"
-    _wait_for_provider_annotation "$ws_consumer" certificates.example.platform-mesh.io/cert-from-consumer "$internalca_cluster_id" "app.internal.corp"
-
-    log "Update Certificate to use externalca in consumer workspace"
-    kubectl --kubeconfig "$ws_consumer" patch certificates cert-from-consumer --type merge -p '{"spec":{"fqdn":"app.corp.com"}}'
-
-    externalca_cluster_id="$(_cluster_id "$ws_externalca" apiexportendpointslices/certificates)"
-    _wait_for_provider_annotation "$ws_consumer" certificates.example.platform-mesh.io/cert-from-consumer "$externalca_cluster_id" "app.corp.com"
-}
-
 _cleanup() {
     log "Cleaning up example resources in consumer ws"
     kubectl::delete "$ws_consumer" certificates.example.platform-mesh.io/cert-from-consumer
@@ -311,6 +262,17 @@ _cleanup() {
     log "Cleaning up example resources in externalca provider"
     kubectl --kubeconfig "$kind_externalca" delete certificates.example.platform-mesh.io -A --all
     kubectl --kubeconfig "$kind_externalca" delete secrets -A --selector kro.run/owned=true
+
+    log "Cleaning up Certificate APIBindings and APIExports"
+    kubectl --kubeconfig "$ws_consumer" delete apibinding certificates
+    kubectl --kubeconfig "$ws_internalca" delete apibinding certificates
+    kubectl --kubeconfig "$ws_internalca" delete apiexport certificates
+    kubectl --kubeconfig "$ws_externalca" delete apibinding certificates
+    kubectl --kubeconfig "$ws_externalca" delete apiexport certificates
+
+    log "Cleaning up AcceptAPI APIBindings"
+    kubectl --kubeconfig "$ws_internalca" delete apibinding acceptapis
+    kubectl --kubeconfig "$ws_externalca" delete apibinding acceptapis
 
     return 0
 }
@@ -339,7 +301,6 @@ case "$1" in
     (cleanup) _cleanup ;;
     (start-broker) _start_broker ;;
     (stop-broker) _stop_broker ;;
-    (run-example) _run_example ;;
     ("")
         _setup || die "Setup failed"
         _start_broker || die "Starting broker failed"
