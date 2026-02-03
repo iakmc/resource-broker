@@ -61,13 +61,13 @@ The resource-broker caches these and uses them to route requests.
 
 1. Setup the kind clusters and install components
 
-```bash
+```bash ci
 ./examples/certs/run.bash setup
 ```
 
 2. Build and start the resource-broker in the platform cluster
 
-```bash
+```bash ci
 ./examples/certs/run.bash start-broker
 ```
 
@@ -115,12 +115,12 @@ sequenceDiagram
 
 Create the certificate in the consumer cluster:
 
-```bash
+```bash ci
 kubectl --kubeconfig ./kubeconfigs/consumer.kubeconfig apply -f ./examples/certs/consumer/cert.yaml
 ```
 
 <!--
-```bash
+```bash ci
 kind_consumer="./kubeconfigs/consumer.kubeconfig"
 kind_internalca="./kubeconfigs/internalca.kubeconfig"
 kind_externalca="./kubeconfigs/externalca.kubeconfig"
@@ -133,7 +133,7 @@ kubectl::wait "$kind_internalca" certificates.cert-manager.io/cert-from-consumer
 
 This will be picked up by resource-broker and sent to the InternalCA provider:
 
-```bash
+```bash ci
 kubectl --kubeconfig ./kubeconfigs/internalca.kubeconfig get certificates.example.platform-mesh.io cert-from-consumer -o yaml
 ```
 
@@ -167,7 +167,7 @@ status:
 
 Which KRO will back with a cert-manager Certificate and Secret:
 
-```bash
+```bash ci
 kubectl --kubeconfig ./kubeconfigs/internalca.kubeconfig get certificates,secrets -l kro.run/owned=true -o yaml
 ```
 
@@ -220,12 +220,12 @@ metadata:
 And the resource-broker synchronizes it back to the consumer cluster:
 
 <!--
-```bash
+```bash ci
 kubectl::wait "$kind_consumer" secrets/cert-from-consumer default create
 ```
 -->
 
-```bash
+```bash ci
 kubectl --kubeconfig ./kubeconfigs/consumer.kubeconfig get secrets cert-from-consumer -o yaml
 ```
 
@@ -251,27 +251,27 @@ type: kubernetes.io/tls
 Getting the certificate from the secret will show the expected FQDN:
 
 <!--
-```bash
+```bash ci
 kubectl::wait::cert::subject "$kind_consumer" "cert-from-consumer" default "app.internal.corp"
 ```
 -->
 
-```bash
+```bash ci
 kubectl --kubeconfig ./kubeconfigs/consumer.kubeconfig get secret cert-from-consumer -o jsonpath='{.data.tls\.crt}' | base64 --decode | openssl x509 -noout -subject
 ```
 
-```
+```text
 subject=CN=app.internal.corp
 ```
 
 Now, update the Certificate in the consumer cluster to use a different FQDN:
 
-```bash
+```bash ci
 kubectl --kubeconfig ./kubeconfigs/consumer.kubeconfig patch certificate cert-from-consumer --type merge -p '{"spec":{"fqdn":"app.corp.com"}}'
 ```
 
 <!--
-```bash
+```bash ci
 kubectl::wait "$kind_externalca" certificates.example.platform-mesh.io/cert-from-consumer default create
 kubectl::wait "$kind_externalca" certificates.cert-manager.io/cert-from-consumer default create
 ```
@@ -280,12 +280,12 @@ kubectl::wait "$kind_externalca" certificates.cert-manager.io/cert-from-consumer
 resource-broker will first create the Certificate in the ExternalCA provider:
 
 <!--
-```bash
+```bash ci
 kubectl::wait "$kind_externalca" certificates.cert-manager.io/cert-from-consumer default condition=Ready
 ```
 -->
 
-```bash
+```bash ci
 kubectl --kubeconfig ./kubeconfigs/externalca.kubeconfig get certificates.example.platform-mesh.io,certificates,secrets -l kro.run/owned=true -o yaml
 ```
 
@@ -365,28 +365,28 @@ metadata:
 And then delete it from the InternalCA provider:
 
 <!--
-```bash
+```bash ci
 kubectl::wait "$kind_internalca" certificates.example.platform-mesh.io/cert-from-consumer default delete
 ```
 -->
 
-```bash
+```bash ci
 kubectl --kubeconfig ./kubeconfigs/internalca.kubeconfig get certificates.example.platform-mesh.io,certificates,secrets -l kro.run/owned=true
 ```
 
 And the updated certificate will reflect the new FQDN:
 
 <!--
-```bash
+```bash ci
 kubectl::wait::cert::subject "$kind_consumer" "cert-from-consumer" default "app.corp.com"
 ```
 -->
 
-```bash
+```bash ci
 kubectl --kubeconfig ./kubeconfigs/consumer.kubeconfig get secret cert-from-consumer -o jsonpath='{.data.tls\.crt}' | base64 --decode | openssl x509 -noout -subject
 ```
 
-```
+```text
 subject=CN=app.corp.com
 ```
 
@@ -394,14 +394,14 @@ subject=CN=app.corp.com
 
 4. (Optional) Clean up resources created during the example
 
-```bash noci
+```bash
 ./examples/certs/run.bash cleanup
 ./examples/certs/run.bash stop-broker
 ```
 
 Or delete the clusters:
 
-```bash noci
+```bash
 kind delete cluster --name broker-platform
 kind delete cluster --name broker-consumer
 kind delete cluster --name broker-internalca

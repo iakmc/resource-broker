@@ -204,7 +204,7 @@ The generic APIs defined by the platform are exported using [APIExports](https:/
 Checking the available APIs in the consumer workspace there are no
 Certificates available yet:
 
-```bash
+```bash ci
 kubectl --kubeconfig="./kubeconfigs/workspaces/consumer.kubeconfig" api-resources --api-group example.platform-mesh.io
 ```
 

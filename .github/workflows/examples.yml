@@ -54,7 +54,7 @@ jobs:
         with:
           input: ./examples/${{ matrix.example }}/README.md
           output: run.bash
-          tags: bash
+          tags: bash,ci
           exclude-tags: noci
 
       - run: bash -xe run.bash

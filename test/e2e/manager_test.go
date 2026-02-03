@@ -26,7 +26,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 
@@ -63,13 +62,7 @@ func TestManagerCopy(t *testing.T) {
 	require.NoError(t, err)
 
 	mgrOptions := frame.Options(t)
-	mgrOptions.GVKs = []schema.GroupVersionKind{
-		{
-			Group:   "",
-			Version: "v1",
-			Kind:    "ConfigMap",
-		},
-	}
+	mgrOptions.WatchKinds = []string{"ConfigMap.v1.core"}
 
 	mgr, err := manager.Setup(mgrOptions)
 	require.NoError(t, err)

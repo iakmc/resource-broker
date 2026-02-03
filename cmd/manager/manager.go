@@ -21,8 +21,8 @@ package manager
 import (
 	"fmt"
 
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 
@@ -68,8 +68,9 @@ type Options struct {
 	// consumer and provider clusters, respectively.
 	Consumer, Provider multicluster.Provider
 
-	// GVKs are the GVKs to broker.
-	GVKs []schema.GroupVersionKind
+	// WatchKinds are fully qualified Kinds to watch.
+	// E.g.: Certificate.v1alpha1.example.platform-mesh.io
+	WatchKinds []string
 }
 
 // Setup sets up the manager and the broker.
@@ -119,12 +120,18 @@ func Setup(opts Options) (mctrl.Manager, error) {
 		return nil, fmt.Errorf("unable to add coordination cluster to manager: %w", err)
 	}
 
+	discoveryClient, err := discovery.NewDiscoveryClientForConfig(coordinationCluster.GetConfig())
+	if err != nil {
+		return nil, fmt.Errorf("unable to create discovery client: %w", err)
+	}
+
 	if _, err := broker.NewBroker(
 		opts.Name,
 		mgr,
 		coordinationCluster.GetClient(),
 		computeClient,
-		opts.GVKs...,
+		discoveryClient,
+		opts.WatchKinds...,
 	); err != nil {
 		return nil, fmt.Errorf("unable to set up broker with manager: %w", err)
 	}

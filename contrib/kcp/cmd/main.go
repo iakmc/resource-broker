@@ -20,9 +20,10 @@ package main
 
 import (
 	"flag"
+	"maps"
 	"os"
+	"slices"
 
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/tools/clientcmd"
 
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -62,10 +63,6 @@ var (
 		"APIExportEndpointSlice name to watch for APIs to broker.",
 	)
 
-	fGroup   = flag.String("group", "", "Group to watch")
-	fVersion = flag.String("version", "", "Version to watch")
-	fKind    = flag.String("kind", "", "Kind to watch")
-
 	fOverrideKcpHost = flag.String("kcp-host-override", "", "If set, overrides the host used to connect to kcp")
 	fOverrideKcpPort = flag.String("kcp-port-override", "", "If set, overrides the port used to connect to kcp")
 )
@@ -75,6 +72,13 @@ func main() {
 		Development: true,
 	}
 	opts.BindFlags(flag.CommandLine)
+
+	watchKinds := map[string]bool{}
+	flag.Func("watch-kind", "Kind to watch in the form of Kind.version.group", func(s string) error {
+		watchKinds[s] = true
+		return nil
+	})
+
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
@@ -128,15 +132,9 @@ func main() {
 	}
 
 	brk, err := kcpbroker.New(kcpbroker.Options{
-		Name: "kcp-main",
-		Log:  setupLog.WithName("broker"),
-		GVKs: []schema.GroupVersionKind{
-			{
-				Group:   *fGroup,
-				Version: *fVersion,
-				Kind:    *fKind,
-			},
-		},
+		Name:       "kcp-main",
+		Log:        setupLog.WithName("broker"),
+		WatchKinds: slices.Collect(maps.Keys(watchKinds)),
 
 		LocalConfig:           local,
 		KcpConfig:             kcpConfig,

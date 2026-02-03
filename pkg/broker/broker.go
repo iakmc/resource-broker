@@ -27,7 +27,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/discovery"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
@@ -57,6 +57,7 @@ const (
 type Broker struct {
 	mgr                   mctrl.Manager
 	coordination, compute client.Client
+	discoveryClient       discovery.DiscoveryInterface
 
 	lock sync.RWMutex
 
@@ -76,12 +77,14 @@ func NewBroker(
 	name string,
 	mgr mctrl.Manager,
 	coordination, compute client.Client,
-	gvks ...schema.GroupVersionKind,
+	discoveryClient discovery.DiscoveryInterface,
+	watchKinds ...string,
 ) (*Broker, error) {
 	b := new(Broker)
 	b.mgr = mgr
 	b.coordination = coordination
 	b.compute = compute
+	b.discoveryClient = discoveryClient
 
 	b.apiAccepters = make(map[metav1.GroupVersionResource]map[string]map[string]brokerv1alpha1.AcceptAPI)
 	if err := mcbuilder.ControllerManagedBy(mgr).
@@ -210,7 +213,7 @@ func NewBroker(
 		},
 	}
 
-	for _, gvk := range gvks {
+	for _, gvk := range ParseKinds(watchKinds) {
 		obj := &unstructured.Unstructured{}
 		obj.SetGroupVersionKind(gvk)
 		if err := mcbuilder.ControllerManagedBy(mgr).
