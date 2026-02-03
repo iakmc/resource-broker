@@ -34,7 +34,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 
@@ -57,9 +56,9 @@ import (
 
 // Options are the options for creating a Broker.
 type Options struct {
-	Name string
-	Log  logr.Logger
-	GVKs []schema.GroupVersionKind
+	Name       string
+	Log        logr.Logger
+	WatchKinds []string
 
 	LocalConfig           *rest.Config
 	KcpConfig             *rest.Config
@@ -98,8 +97,8 @@ func (o Options) validate() error {
 	if o.BrokerAPIName == "" {
 		return fmt.Errorf("broker api name is required")
 	}
-	if len(o.GVKs) == 0 {
-		return fmt.Errorf("at least one GVK is required")
+	if len(o.WatchKinds) == 0 {
+		return fmt.Errorf("at least one watch kinds is required")
 	}
 	return nil
 }
@@ -386,7 +385,7 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 		},
 	}
 
-	for _, gvk := range b.opts.GVKs {
+	for _, gvk := range broker.ParseKinds(b.opts.WatchKinds) {
 		obj := &unstructured.Unstructured{}
 		obj.SetGroupVersionKind(gvk)
 		if err := mcbuilder.ControllerManagedBy(generalMgr).

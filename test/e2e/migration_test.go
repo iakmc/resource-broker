@@ -28,7 +28,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 
@@ -45,13 +44,7 @@ func TestMigrationNoStages(t *testing.T) {
 	frame := NewFrame(t)
 
 	mgrOptions := frame.Options(t)
-	mgrOptions.GVKs = []schema.GroupVersionKind{
-		{
-			Group:   "example.platform-mesh.io",
-			Version: "v1alpha1",
-			Kind:    "VM",
-		},
-	}
+	mgrOptions.WatchKinds = []string{"VM.v1alpha1.example.platform-mesh.io"}
 
 	mgr, err := manager.Setup(mgrOptions)
 	require.NoError(t, err)
@@ -274,13 +267,7 @@ func TestMigrationWithStages(t *testing.T) {
 	frame := NewFrame(t)
 
 	mgrOptions := frame.Options(t)
-	mgrOptions.GVKs = []schema.GroupVersionKind{
-		{
-			Group:   "example.platform-mesh.io",
-			Version: "v1alpha1",
-			Kind:    "VM",
-		},
-	}
+	mgrOptions.WatchKinds = []string{"VM.v1alpha1.example.platform-mesh.io"}
 
 	mgr, err := manager.Setup(mgrOptions)
 	require.NoError(t, err)

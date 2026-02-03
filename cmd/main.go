@@ -21,10 +21,11 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/tools/clientcmd"
 
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -77,9 +78,6 @@ var (
 		"",
 		"Directory for the provider kubeconfigs. If not set, in-cluster config will be used.",
 	)
-	fGroup   = flag.String("group", "", "Group to watch")
-	fVersion = flag.String("version", "", "Version to watch")
-	fKind    = flag.String("kind", "", "Kind to watch")
 )
 
 func splitAndTrim(s string) []string {
@@ -124,6 +122,13 @@ func main() {
 		Development: true,
 	}
 	opts.BindFlags(flag.CommandLine)
+
+	watchKinds := map[string]bool{}
+	flag.Func("watch-kind", "Kind to watch in the form of Kind.version.group", func(s string) error {
+		watchKinds[s] = true
+		return nil
+	})
+
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
@@ -286,13 +291,7 @@ func main() {
 		CoordinationConfig: coordinationConfig,
 		Consumer:           consumer,
 		Provider:           provider,
-		GVKs: []schema.GroupVersionKind{
-			{
-				Group:   *fGroup,
-				Version: *fVersion,
-				Kind:    *fKind,
-			},
-		},
+		WatchKinds:         slices.Collect(maps.Keys(watchKinds)),
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to set up overall controller manager")
