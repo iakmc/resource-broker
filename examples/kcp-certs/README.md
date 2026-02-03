@@ -433,30 +433,6 @@ kubectl --kubeconfig kubeconfigs/workspaces/consumer.kubeconfig \
 # serial=0E7311D15E34081A8F1FD7447F1FF4C7BC055238
 ```
 
-<!--
-Compare serials
-```bash ci
-internalca_serial="$(
-    kubectl --kubeconfig kubeconfigs/internalca.kubeconfig \
-        get secrets --namespace "$secret_namespace" "$secret_name" \
-            -o jsonpath="{.data.tls\.crt}" \
-        | base64 --decode \
-        | openssl x509 -noout -serial
-)"
-consumer_serial="$(
-    kubectl --kubeconfig kubeconfigs/workspaces/consumer.kubeconfig \
-        get secrets "$secret_name" \
-            -o jsonpath="{.data.tls\.crt}" \
-        | base64 --decode \
-        | openssl x509 -noout -serial
-)"
-if [ "$internalca_serial" != "$consumer_serial" ]; then
-    echo "Serials do not match between provider and consumer ($internalca_serial != $consumer_serial)"
-    exit 1
-fi
-```
--->
-
 #### Switching providers
 
 Now update the Certificate to request a certificate for `app.corp.com`,
@@ -542,36 +518,6 @@ kubectl --kubeconfig kubeconfigs/workspaces/consumer.kubeconfig \
     | openssl x509 -noout -serial
 # serial=204F68FCA700404CB7745D7A603BA5A28DC68E95
 ```
-
-<!--
-Compare serials
-```bash ci
-externalca_serial="$(
-    kubectl --kubeconfig kubeconfigs/externalca.kubeconfig \
-        get secrets --namespace "$secret_namespace" "$secret_name" \
-            -o jsonpath="{.data.tls\.crt}" \
-        | base64 --decode \
-        | openssl x509 -noout -serial
-)"
-# Not sure why but had failures here that the serial was still the old
-# serial even though the check further up already showed the changed
-# fqdn. I can only imagine that this was an edge case maybe?
-newconsumer_serial="$consumer_serial"
-while [ "$consumer_serial" = "$newconsumer_serial" ]; do
-    newconsumer_serial="$(
-        kubectl --kubeconfig kubeconfigs/workspaces/consumer.kubeconfig \
-            get secrets "$secret_name" \
-                -o jsonpath="{.data.tls\.crt}" \
-            | base64 --decode \
-            | openssl x509 -noout -serial
-    )"
-done
-if [ "$externalca_serial" != "$newconsumer_serial" ]; then
-    echo "Serials do not match between provider and consumer ($externalca_serial != $newconsumer_serial)"
-    exit 1
-fi
-```
--->
 
 ### Cleanup
 
