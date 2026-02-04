@@ -290,15 +290,12 @@ _ci() {
     kubectl --kubeconfig "$kubeconfigs/workspaces/externalca.vw.kubeconfig" get certificates.example.platform-mesh.io -A -o yaml > externalca-vw-certificates.yaml
 }
 
-if [[ -n "$CI" ]]; then
-    trap _ci EXIT
-fi
-
 case "$1" in
     (setup) _setup ;;
     (cleanup) _cleanup ;;
     (start-broker) _start_broker ;;
     (stop-broker) _stop_broker ;;
+    (ci) _ci;;
     ("")
         _setup || die "Setup failed"
         _start_broker || die "Starting broker failed"

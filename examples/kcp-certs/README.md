@@ -29,6 +29,10 @@ TODO(ntnn): Install kubectl plugins locally via e.g. uget
 For now just add the krew bin folder to path
 ```bash ci
 export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"
+_ci() {
+    ./examples/kcp-certs/run.bash ci
+}
+trap _ci EXIT
 ```
 -->
 

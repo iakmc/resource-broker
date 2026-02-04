@@ -132,12 +132,23 @@ _cleanup() {
     return 0
 }
 
+_ci() {
+    kubectl --kubeconfig "$kind_platform" logs deployment/resource-broker > resource-broker.log
+    kubectl --kubeconfig "$kind_consumer" get certificates.example.platform-mesh.io -A -o yaml > consumer-certificates.yaml
+
+    kubectl --kubeconfig "$kind_internalca" logs deployment/cert-manager > internalca-cert-manager.log
+    kubectl --kubeconfig "$kind_internalca" get certificates.example.platform-mesh.io -A -o yaml > internalca-certificates.yaml
+
+    kubectl --kubeconfig "$kind_externalca" logs deployment/cert-manager > externalca-cert-manager.log
+    kubectl --kubeconfig "$kind_externalca" get certificates.example.platform-mesh.io -A -o yaml > externalca-certificates.yaml
+}
 
 case "$1" in
     (setup) _setup ;;
     (cleanup) _cleanup ;;
     (start-broker) _start_broker ;;
     (stop-broker) _stop_broker ;;
+    (ci) _ci;;
     ("")
         _setup || die "Setup failed"
         _start_broker || die "Starting broker failed"

@@ -57,6 +57,15 @@ The resource-broker caches these and uses them to route requests.
 
 ## Running the Example
 
+<!--
+```bash ci
+_ci() {
+    ./examples/certs/run.bash ci
+}
+trap _ci EXIT
+```
+-->
+
 ### Setup
 
 1. Setup the kind clusters and install components
@@ -121,13 +130,10 @@ kubectl --kubeconfig ./kubeconfigs/consumer.kubeconfig apply -f ./examples/certs
 
 <!--
 ```bash ci
-kind_consumer="./kubeconfigs/consumer.kubeconfig"
-kind_internalca="./kubeconfigs/internalca.kubeconfig"
-kind_externalca="./kubeconfigs/externalca.kubeconfig"
 source ./hack/lib.bash
-kubectl::wait "$kind_internalca" certificates.example.platform-mesh.io/cert-from-consumer default create
-kubectl::wait "$kind_internalca" certificates.cert-manager.io/cert-from-consumer default create
-kubectl::wait "$kind_internalca" certificates.cert-manager.io/cert-from-consumer default condition=Ready
+kubectl::wait ./kubeconfigs/internalca.kubeconfig certificates.example.platform-mesh.io/cert-from-consumer default create
+kubectl::wait ./kubeconfigs/internalca.kubeconfig certificates.cert-manager.io/cert-from-consumer default create
+kubectl::wait ./kubeconfigs/internalca.kubeconfig certificates.cert-manager.io/cert-from-consumer default condition=Ready
 ```
 -->
 
@@ -221,7 +227,7 @@ And the resource-broker synchronizes it back to the consumer cluster:
 
 <!--
 ```bash ci
-kubectl::wait "$kind_consumer" secrets/cert-from-consumer default create
+kubectl::wait ./kubeconfigs/consumer.kubeconfig secrets/cert-from-consumer default create
 ```
 -->
 
@@ -252,7 +258,7 @@ Getting the certificate from the secret will show the expected FQDN:
 
 <!--
 ```bash ci
-kubectl::wait::cert::subject "$kind_consumer" "cert-from-consumer" default "app.internal.corp"
+kubectl::wait::cert::subject ./kubeconfigs/consumer.kubeconfig "cert-from-consumer" default "app.internal.corp"
 ```
 -->
 
@@ -272,8 +278,8 @@ kubectl --kubeconfig ./kubeconfigs/consumer.kubeconfig patch certificate cert-fr
 
 <!--
 ```bash ci
-kubectl::wait "$kind_externalca" certificates.example.platform-mesh.io/cert-from-consumer default create
-kubectl::wait "$kind_externalca" certificates.cert-manager.io/cert-from-consumer default create
+kubectl::wait ./kubeconfigs/externalca.kubeconfig certificates.example.platform-mesh.io/cert-from-consumer default create
+kubectl::wait ./kubeconfigs/externalca.kubeconfig certificates.cert-manager.io/cert-from-consumer default create
 ```
 -->
 
@@ -281,7 +287,7 @@ resource-broker will first create the Certificate in the ExternalCA provider:
 
 <!--
 ```bash ci
-kubectl::wait "$kind_externalca" certificates.cert-manager.io/cert-from-consumer default condition=Ready
+kubectl::wait ./kubeconfigs/externalca.kubeconfig certificates.cert-manager.io/cert-from-consumer default condition=Ready
 ```
 -->
 
@@ -366,7 +372,7 @@ And then delete it from the InternalCA provider:
 
 <!--
 ```bash ci
-kubectl::wait "$kind_internalca" certificates.example.platform-mesh.io/cert-from-consumer default delete
+kubectl::wait ./kubeconfigs/internalca.kubeconfig certificates.example.platform-mesh.io/cert-from-consumer default delete
 ```
 -->
 
@@ -378,7 +384,7 @@ And the updated certificate will reflect the new FQDN:
 
 <!--
 ```bash ci
-kubectl::wait::cert::subject "$kind_consumer" "cert-from-consumer" default "app.corp.com"
+kubectl::wait::cert::subject ./kubeconfigs/consumer.kubeconfig "cert-from-consumer" default "app.corp.com"
 ```
 -->
 
