@@ -83,10 +83,6 @@ type migrationReconciler struct {
 	cluster cluster.Cluster
 }
 
-// +kubebuilder:rbac:groups=broker.platform-mesh.io,resources=migrations,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=broker.platform-mesh.io,resources=migrations/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=broker.platform-mesh.io,resources=migrations/finalizers,verbs=update
-
 func (mr *migrationReconciler) reconcile(ctx context.Context) (mctrl.Result, error) {
 	mr.log.Info("Reconciling migration")
 

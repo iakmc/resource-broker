@@ -60,10 +60,6 @@ func ConfigurationReconcilerFunc(opts ConfigurationOptions) mcreconcile.Func {
 	}
 }
 
-// +kubebuilder:rbac:groups=broker.platform-mesh.io,resources=migrationconfigurations,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=broker.platform-mesh.io,resources=migrationconfigurations/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=broker.platform-mesh.io,resources=migrationconfigurations/finalizers,verbs=update
-
 const migrationConfigurationFinalizer = "broker.platform-mesh.io/migrationconfiguration-finalizer"
 
 type configurationReconciler struct {
