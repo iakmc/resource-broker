@@ -90,8 +90,10 @@ kubectl::wait() {
     local namespace="$3"
     local for="$4"
 
-    kubectl --kubeconfig "$kubeconfig" wait --for="create" "$resource" --timeout="$timeout" --namespace="$namespace" \
-        || die "Timed out waiting for creation of $resource in cluster with kubeconfig $kubeconfig"
+    if [[ "$for" =~ jsonpath=* ]]; then
+        kubectl --kubeconfig "$kubeconfig" wait --for="create" "$resource" --timeout="$timeout" --namespace="$namespace" \
+            || die "Timed out waiting for creation of $resource in cluster with kubeconfig $kubeconfig"
+    fi
     kubectl --kubeconfig "$kubeconfig" wait --for="$for" "$resource" --timeout="$timeout" --namespace="$namespace" \
         || die "Timed out waiting for $for on $resource in cluster with kubeconfig $kubeconfig"
 }
