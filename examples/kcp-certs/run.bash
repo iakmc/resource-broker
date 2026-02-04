@@ -49,15 +49,15 @@ _setup() {
     log "Installing migration CRDs into platform workspace"
     kubectl::apply \
         "$ws_platform" \
-        ./config/crd/bases/broker.platform-mesh.io_migrationconfigurations.yaml \
-        ./config/crd/bases/broker.platform-mesh.io_migrations.yaml
+        ./config/broker/crd/broker.platform-mesh.io_migrationconfigurations.yaml \
+        ./config/broker/crd/broker.platform-mesh.io_migrations.yaml
 
     log "Setting up AcceptAPI APIExport for providers"
-    kcp::apiexport "$ws_platform" "./config/crd/bases/broker.platform-mesh.io_acceptapis.yaml" \
+    kcp::apiexport "$ws_platform" ./config/broker/crd/broker.platform-mesh.io_acceptapis.yaml \
         secrets get,list,watch
 
     log "Setting up Certificate APIExport for consumers"
-    kcp::apiexport "$ws_platform" "./config/crd/bases/example.platform-mesh.io_certificates.yaml" \
+    kcp::apiexport "$ws_platform" ./config/example/crd/example.platform-mesh.io_certificates.yaml \
         secrets '*'
 
     log "Setting up internalca kcp workspace"
