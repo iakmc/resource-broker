@@ -57,6 +57,15 @@ The resource-broker caches these and uses them to route requests.
 
 ## Running the Example
 
+<!--
+```bash ci
+_ci() {
+    ./examples/certs/run.bash ci
+}
+trap _ci EXIT
+```
+-->
+
 ### Setup
 
 1. Setup the kind clusters and install components
