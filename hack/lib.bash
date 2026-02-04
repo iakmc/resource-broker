@@ -90,10 +90,6 @@ kubectl::wait() {
     local namespace="$3"
     local for="$4"
 
-    if [[ "$for" =~ jsonpath=* ]]; then
-        kubectl --kubeconfig "$kubeconfig" wait --for="create" "$resource" --timeout="$timeout" --namespace="$namespace" \
-            || die "Timed out waiting for creation of $resource in cluster with kubeconfig $kubeconfig"
-    fi
     kubectl --kubeconfig "$kubeconfig" wait --for="$for" "$resource" --timeout="$timeout" --namespace="$namespace" \
         || die "Timed out waiting for $for on $resource in cluster with kubeconfig $kubeconfig"
 }
@@ -124,6 +120,7 @@ kubectl::wait::suffix() {
     local jsonpath="$4"
     local suffix="$5"
 
+    kubectl::wait "$kubeconfig" "$resource" "$namespace" create
     kubectl::wait "$kubeconfig" "$resource" "$namespace" jsonpath="{$jsonpath}"
 
     local value="$(kubectl --kubeconfig "$kubeconfig" get "$resource" -n "$namespace" -o "jsonpath={$jsonpath}")"
@@ -148,6 +145,7 @@ kubectl::secret::debase64() {
     local jsonpath="$4"
 
     # redirect to stderr to not pollute the output
+    kubectl::wait "$kubeconfig" "secret/$resource" "$namespace" create >&2
     kubectl::wait "$kubeconfig" "secret/$resource" "$namespace" jsonpath="{$jsonpath}" >&2
     kubectl --kubeconfig "$kubeconfig" get secret "$resource" -n "$namespace" -o "jsonpath={$jsonpath}" | base64 -d
 }
