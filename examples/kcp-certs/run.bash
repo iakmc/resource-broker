@@ -110,14 +110,12 @@ _provider_setup_new() {
 
     log "Setting up api-syncagent in $name kind cluster"
 
-    # kubectl::kubeconfig::secret "$kind_kubeconfig" "$ws_kubeconfig" "$name" "broker-platform-control-plane:32443"
-
     local api_syncagent_token="$(kcp::serviceaccount::admin "$ws_kubeconfig" api-syncagent default)"
     local api_syncagent_kubeconfig="$kubeconfigs/api-syncagent-$name.kubeconfig"
     kubeconfig::create::token "$api_syncagent_kubeconfig" \
         "$(kubectl::kubeconfig::current_server_url "$ws_kubeconfig")" \
         "$api_syncagent_token"
-    kubectl::kubeconfig::secret "$kind_kubeconfig" "$api_syncagent_kubeconfig" "$name" "broker-platform-control-plane:32111"
+    kubectl::kubeconfig::secret "$kind_kubeconfig" "$api_syncagent_kubeconfig" "$name" default "broker-platform-control-plane:32111"
 
     helm::install::api_syncagent "$kind_kubeconfig" "certificates" "$name" "kubeconfig-$name" \
         --set replicas=1
@@ -144,7 +142,7 @@ _provider_setup_new() {
 
     # Create a secret with the kubeconfig, this will be pulled by the
     # broker.
-    kubectl::kubeconfig::secret "$ws_kubeconfig" "$ws_vw" "$name" "broker-platform-control-plane:32443"
+    kubectl::kubeconfig::secret "$ws_kubeconfig" "$ws_vw" "$name" default "broker-platform-control-plane:32443"
 
     # # Bind the AcceptAPI from the platform workspace and instantiate it with
     # # the certificates resources.

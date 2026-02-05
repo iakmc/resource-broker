@@ -51,10 +51,10 @@ _start_broker() {
     kind load docker-image "resource-broker:${image_id}" --name broker-platform \
         || die "Failed to load resource-broker image into kind cluster"
 
-    kubectl::kubeconfig::secret "$kind_platform" "$kind_platform" platform broker-platform-control-plane:6443
-    kubectl::kubeconfig::secret "$kind_platform" "$kind_consumer" consumer broker-consumer-control-plane:6443
-    kubectl::kubeconfig::secret "$kind_platform" "$kind_internalca" internalca broker-internalca-control-plane:6443
-    kubectl::kubeconfig::secret "$kind_platform" "$kind_externalca" externalca broker-externalca-control-plane:6443
+    kubectl::kubeconfig::secret "$kind_platform" "$kind_platform" platform default broker-platform-control-plane:6443
+    kubectl::kubeconfig::secret "$kind_platform" "$kind_consumer" consumer default broker-consumer-control-plane:6443
+    kubectl::kubeconfig::secret "$kind_platform" "$kind_internalca" internalca default broker-internalca-control-plane:6443
+    kubectl::kubeconfig::secret "$kind_platform" "$kind_externalca" externalca default broker-externalca-control-plane:6443
 
     {
         echo 'apiVersion: apps/v1'
