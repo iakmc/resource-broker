@@ -33,6 +33,7 @@ jobs:
     needs:
       - list-examples
     strategy:
+      fail-fast: false
       matrix:
         example: ${{ fromJson(needs.list-examples.outputs.examples) }}
     steps:
