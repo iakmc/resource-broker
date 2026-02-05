@@ -44,79 +44,22 @@ _setup() {
 _start_broker() {
     log "Starting broker"
 
-    make docker-build || die "Failed to build resource-broker image"
-    local image_id="$(docker inspect resource-broker:latest --format '{{.ID}}')"
-    image_id="${image_id//sha256:/}"
-    docker tag "resource-broker:latest" "resource-broker:${image_id}"
-    kind load docker-image "resource-broker:${image_id}" --name broker-platform \
-        || die "Failed to load resource-broker image into kind cluster"
+    make docker-build docker-build-operator || die "Failed to build docker images"
+    make kind-load kind-load-operator KIND_CLUSTER=broker-platform \
+        || die "Failed to load images into kind cluster"
+    make deploy-operator KUBECONFIG="$kind_platform" || die "Failed to deploy resource-broker-operator"
 
-    kubectl::kubeconfig::secret "$kind_platform" "$kind_platform" platform default broker-platform-control-plane:6443
-    kubectl::kubeconfig::secret "$kind_platform" "$kind_consumer" consumer default broker-consumer-control-plane:6443
-    kubectl::kubeconfig::secret "$kind_platform" "$kind_internalca" internalca default broker-internalca-control-plane:6443
-    kubectl::kubeconfig::secret "$kind_platform" "$kind_externalca" externalca default broker-externalca-control-plane:6443
+    kubectl::kubeconfig::secret "$kind_platform" "$kind_platform" platform resource-broker-system broker-platform-control-plane:6443
+    kubectl::kubeconfig::secret "$kind_platform" "$kind_consumer" consumer resource-broker-system broker-consumer-control-plane:6443
+    kubectl::kubeconfig::secret "$kind_platform" "$kind_internalca" internalca resource-broker-system broker-internalca-control-plane:6443
+    kubectl::kubeconfig::secret "$kind_platform" "$kind_externalca" externalca resource-broker-system broker-externalca-control-plane:6443
 
-    {
-        echo 'apiVersion: apps/v1'
-        echo 'kind: Deployment'
-        echo 'metadata:'
-        echo '  name: resource-broker'
-        echo '  namespace: default'
-        echo 'spec:'
-        echo '  replicas: 1'
-        echo '  selector:'
-        echo '    matchLabels:'
-        echo '      app: resource-broker'
-        echo '  template:'
-        echo '    metadata:'
-        echo '      labels:'
-        echo '        app: resource-broker'
-        echo '    spec:'
-        echo '      containers:'
-        echo '      - name: resource-broker'
-        echo "        image: resource-broker:${image_id}"
-        echo '        args:'
-        echo '        - "-kubeconfig=/kubeconfigs/platform/kubeconfig"'
-        echo '        - "-coordination-kubeconfig=/kubeconfigs/platform/kubeconfig"'
-        echo '        - "-compute-kubeconfig=/kubeconfigs/platform/kubeconfig"'
-        echo '        - "-consumer-kubeconfig=/kubeconfigs/consumer/kubeconfig"'
-        echo '        - "-provider-kubeconfig=/kubeconfigs/internalca/kubeconfig,/kubeconfigs/externalca/kubeconfig"'
-        echo '        - "-zap-devel=true"'
-        echo '        - "-watch-kind=Certificate.v1alpha1.example.platform-mesh.io"'
-        echo '        volumeMounts:'
-        echo '        - name: kubeconfig-platform'
-        echo '          mountPath: /kubeconfigs/platform'
-        echo '          readOnly: true'
-        echo '        - name: kubeconfig-consumer'
-        echo '          mountPath: /kubeconfigs/consumer'
-        echo '          readOnly: true'
-        echo '        - name: kubeconfig-internalca'
-        echo '          mountPath: /kubeconfigs/internalca'
-        echo '          readOnly: true'
-        echo '        - name: kubeconfig-externalca'
-        echo '          mountPath: /kubeconfigs/externalca'
-        echo '          readOnly: true'
-        echo '      volumes:'
-        echo '      - name: kubeconfig-platform'
-        echo '        secret:'
-        echo '          secretName: kubeconfig-platform'
-        echo '      - name: kubeconfig-consumer'
-        echo '        secret:'
-        echo '          secretName: kubeconfig-consumer'
-        echo '      - name: kubeconfig-internalca'
-        echo '        secret:'
-        echo '          secretName: kubeconfig-internalca'
-        echo '      - name: kubeconfig-externalca'
-        echo '        secret:'
-        echo '          secretName: kubeconfig-externalca'
-    } | kubectl::apply "$kind_platform" "-"
-    KUBECONFIG="$kubeconfigs/platform.kubeconfig" \
-        kubectl rollout status deployment/resource-broker -n default --timeout="$timeout" \
-        || die "Resource broker deployment failed to roll out"
+    kubectl::kustomize "$kind_platform" "$example_dir/platform"
+    kubectl::wait "$kind_platform" broker/resource-broker resource-broker-system condition=Available
 }
 
 _stop_broker() {
-    kubectl::delete "$kind_platform" deployment/resource-broker
+    kubectl --kubeconfig "$kind_platform" delete -n resource-broker-system broker/resource-broker
 }
 
 _cleanup() {
@@ -137,7 +80,8 @@ _cleanup() {
 }
 
 _ci() {
-    kubectl --kubeconfig "$kind_platform" logs deployment/resource-broker > resource-broker.log
+    kubectl --kubeconfig "$kind_platform" logs -n resource-broker-system deployment/resource-broker-operator > resource-broker-operator.log
+    kubectl --kubeconfig "$kind_platform" logs -n resource-broker-system deployment/resource-broker > resource-broker.log
     kubectl --kubeconfig "$kind_consumer" get certificates.example.platform-mesh.io -A -o yaml > consumer-certificates.yaml
 
     kubectl --kubeconfig "$kind_internalca" logs deployment/cert-manager > internalca-cert-manager.log
@@ -153,11 +97,5 @@ case "$1" in
     (start-broker) _start_broker ;;
     (stop-broker) _stop_broker ;;
     (ci) _ci;;
-    ("")
-        _setup || die "Setup failed"
-        _start_broker || die "Starting broker failed"
-        _cleanup || die "Cleanup failed"
-        _run_example || die "Running example failed"
-        ;;
     (*) die "Unknown command: $1" ;;
 esac
