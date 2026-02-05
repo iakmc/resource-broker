@@ -15,7 +15,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// The main package running the resource-broker.
+// This package is running the resource-broker.
 package main
 
 import (
