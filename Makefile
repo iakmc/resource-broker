@@ -1,5 +1,6 @@
 # Image URL to use all building/pushing image targets
-IMG ?= resource-broker
+IMG ?= resource-broker:dev
+IMG_OPERATOR ?= resource-broker-operator:dev
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -113,9 +114,17 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 build: manifests generate fmt vet ## Build manager binary.
 	go build -o bin/manager ./cmd/
 
+.PHONY: build-operator
+build-operator: manifests generate fmt vet ## Build operator binary.
+	go build -o bin/operator ./cmd/operator
+
 .PHONY: run
-run: manifests generate fmt vet ## Run a controller from your host.
-	go run ./cmd/
+run: manifests generate fmt vet ## Run manager from your host.
+	go run ./cmd/ -zap-devel=true -zap-log-level=debug
+
+.PHONY: run-operator
+run-operator: manifests generate fmt vet ## Run operator from your host.
+	go run ./cmd/operator -zap-devel=true -zap-log-level=debug
 
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.
@@ -124,20 +133,22 @@ run: manifests generate fmt vet ## Run a controller from your host.
 docker-build: ## Build docker image with the manager.
 	$(CONTAINER_TOOL) build -t ${IMG} .
 
+.PHONY: docker-build-operator
+docker-build-operator: ## Build docker image with the operator.
+	$(CONTAINER_TOOL) build -t ${IMG_OPERATOR} -f cmd/operator/Dockerfile .
+
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
 
+.PHONY: docker-push-operator
+docker-push-operator: ## Push docker image with the operator.
+	$(CONTAINER_TOOL) push ${IMG_OPERATOR}
+
 .PHONY: docker-bake
-docker-bake: ## Build docker image for the manager with cross-platform support
+docker-bake: ## Build docker images with cross-platform support
 	@echo "If this fails your docker likely doesn't use containerd as the storage backend"
 	$(CONTAINER_TOOL) buildx bake --load
-
-.PHONY: build-installer
-build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
-	mkdir -p dist
-	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
-	$(KUSTOMIZE) build config/default > dist/install.yaml
 
 ##@ Deployment
 
@@ -153,6 +164,10 @@ install: manifests kustomize ## Install broker CRDs.
 install-example: manifests kustomize ## Install example CRDs.
 	$(KUSTOMIZE) build config/example/crd | $(KUBECTL) apply -f -
 
+.PHONY: install-operator
+install-operator: manifests kustomize ## Install operator CRDs.
+	$(KUSTOMIZE) build config/operator/crd | $(KUBECTL) apply -f -
+
 .PHONY: uninstall
 uninstall: manifests kustomize ## Uninstall broker CRDs.
 	$(KUSTOMIZE) build config/broker/crd | $(KUBECTL) delete --ignore-not-found=true -f -
@@ -161,19 +176,37 @@ uninstall: manifests kustomize ## Uninstall broker CRDs.
 uninstall-example: manifests kustomize ## Uninstall example CRDs.
 	$(KUSTOMIZE) build config/example/crd | $(KUBECTL) delete --ignore-not-found=true -f -
 
+.PHONY: uninstall-operator
+uninstall-operator: manifests kustomize ## Uninstall operator CRDs.
+	$(KUSTOMIZE) build config/operator/crd | $(KUBECTL) delete --ignore-not-found=true -f -
+
 .PHONY: deploy
 deploy: manifests kustomize ## Deploy broker.
-	# cd config/broker/default && $(KUSTOMIZE) edit set image broker=${IMG}
+	cd config/broker/default && $(KUSTOMIZE) edit set image broker=${IMG}
 	$(KUBECTL) create namespace --dry-run=client resource-broker-system -o yaml | $(KUBECTL) apply -f -
 	$(KUSTOMIZE) build config/broker/default | $(KUBECTL) apply -f -
 
 .PHONY: deploy-example
-deploy-example: manifests kustomize ## Deploy broker.
+deploy-example: manifests kustomize ## Deploy example.
 	$(KUSTOMIZE) build config/example/default | $(KUBECTL) apply -f -
 
+.PHONY: deploy-operator
+deploy-operator: manifests kustomize ## Deploy operator.
+	cd config/operator/default && $(KUSTOMIZE) edit set image operator=${IMG_OPERATOR}
+	$(KUBECTL) create namespace --dry-run=client resource-broker-system -o yaml | $(KUBECTL) apply -f -
+	$(KUSTOMIZE) build config/operator/default | $(KUBECTL) apply -f -
+
 .PHONY: undeploy
-undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
-	$(KUSTOMIZE) build config/broker/default | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
+undeploy: kustomize ## Undeploy broker.
+	$(KUSTOMIZE) build config/broker/default | $(KUBECTL) delete --ignore-not-found=true -f -
+
+.PHONY: undeploy-example
+undeploy-example: kustomize ## Undeploy example.
+	$(KUSTOMIZE) build config/example/default | $(KUBECTL) delete --ignore-not-found=true -f -
+
+.PHONY: undeploy-operator
+undeploy-operator: kustomize ## Undeploy operator.
+	$(KUSTOMIZE) build config/operator/default | $(KUBECTL) delete --ignore-not-found=true -f -
 
 ##@ Dependencies
 
