@@ -1,0 +1,33 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: resource-broker-example
+rules:
+- apiGroups:
+  - example.platform-mesh.io
+  resources:
+  - certificates
+  - vms
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - example.platform-mesh.io
+  resources:
+  - certificates/finalizers
+  - vms/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - example.platform-mesh.io
+  resources:
+  - certificates/status
+  - vms/status
+  verbs:
+  - get

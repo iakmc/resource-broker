@@ -50,7 +50,7 @@ help: ## Display this help.
 .PHONY: manifests
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
 	$(CONTROLLER_GEN) crd rbac:roleName=resource-broker output:crd:dir=config/broker/crd output:rbac:dir=config/broker/rbac paths="./api/broker/..."
-	$(CONTROLLER_GEN) crd rbac:roleName=resource-broker output:crd:dir=config/example/crd output:rbac:dir=config/example/rbac paths="./api/example/..."
+	$(CONTROLLER_GEN) crd rbac:roleName=resource-broker-example output:crd:dir=config/example/crd output:rbac:dir=config/example/rbac paths="./api/example/..."
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
@@ -145,21 +145,34 @@ ifndef ignore-not-found
 endif
 
 .PHONY: install
-install: manifests kustomize ## Install CRDs into the K8s cluster specified in ~/.kube/config.
-	$(KUSTOMIZE) build config/crd | $(KUBECTL) apply -f -
+install: manifests kustomize ## Install broker CRDs.
+	$(KUSTOMIZE) build config/broker/crd | $(KUBECTL) apply -f -
+
+.PHONY: install-example
+install-example: manifests kustomize ## Install example CRDs.
+	$(KUSTOMIZE) build config/example/crd | $(KUBECTL) apply -f -
 
 .PHONY: uninstall
-uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
-	$(KUSTOMIZE) build config/crd | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
+uninstall: manifests kustomize ## Uninstall broker CRDs.
+	$(KUSTOMIZE) build config/broker/crd | $(KUBECTL) delete --ignore-not-found=true -f -
+
+.PHONY: uninstall-example
+uninstall-example: manifests kustomize ## Uninstall example CRDs.
+	$(KUSTOMIZE) build config/example/crd | $(KUBECTL) delete --ignore-not-found=true -f -
 
 .PHONY: deploy
-deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in ~/.kube/config.
-	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
-	$(KUSTOMIZE) build config/default | $(KUBECTL) apply -f -
+deploy: manifests kustomize ## Deploy broker.
+	# cd config/broker/default && $(KUSTOMIZE) edit set image broker=${IMG}
+	$(KUBECTL) create namespace --dry-run=client resource-broker-system -o yaml | $(KUBECTL) apply -f -
+	$(KUSTOMIZE) build config/broker/default | $(KUBECTL) apply -f -
+
+.PHONY: deploy-example
+deploy-example: manifests kustomize ## Deploy broker.
+	$(KUSTOMIZE) build config/example/default | $(KUBECTL) apply -f -
 
 .PHONY: undeploy
 undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
-	$(KUSTOMIZE) build config/default | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
+	$(KUSTOMIZE) build config/broker/default | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
 
 ##@ Dependencies
 

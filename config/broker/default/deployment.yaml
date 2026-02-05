@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: resource-broker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: resource-broker
+  template:
+    metadata:
+      labels:
+        app: resource-broker
+    spec:
+      serviceAccountName: resource-broker
+      containers:
+        - name: resource-broker
+          image: broker
+          args:
+            - -watch-kind
+            - Certificate.v1alpha1.example.platform-mesh.io
+            - -watch-kind
+            - VM.v1alpha1.example.platform-mesh.io
