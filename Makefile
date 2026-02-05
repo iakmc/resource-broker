@@ -148,15 +148,27 @@ endif
 install: manifests kustomize ## Install broker CRDs.
 	$(KUSTOMIZE) build config/broker/crd | $(KUBECTL) apply -f -
 
+.PHONY: install-example
+install-example: manifests kustomize ## Install example CRDs.
+	$(KUSTOMIZE) build config/example/crd | $(KUBECTL) apply -f -
+
 .PHONY: uninstall
 uninstall: manifests kustomize ## Uninstall broker CRDs.
 	$(KUSTOMIZE) build config/broker/crd | $(KUBECTL) delete --ignore-not-found=true -f -
+
+.PHONY: uninstall-example
+uninstall-example: manifests kustomize ## Uninstall example CRDs.
+	$(KUSTOMIZE) build config/example/crd | $(KUBECTL) delete --ignore-not-found=true -f -
 
 .PHONY: deploy
 deploy: manifests kustomize ## Deploy broker.
 	# cd config/broker/default && $(KUSTOMIZE) edit set image broker=${IMG}
 	$(KUBECTL) create namespace --dry-run=client resource-broker-system -o yaml | $(KUBECTL) apply -f -
 	$(KUSTOMIZE) build config/broker/default | $(KUBECTL) apply -f -
+
+.PHONY: deploy-example
+deploy-example: manifests kustomize ## Deploy broker.
+	$(KUSTOMIZE) build config/example/default | $(KUBECTL) apply -f -
 
 .PHONY: undeploy
 undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
