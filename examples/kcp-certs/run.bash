@@ -35,9 +35,15 @@ _setup() {
     helm::install::certmanager "$kind_platform"
     helm::install::etcddruid "$kind_platform"
     helm::install::kcp "$kind_platform"
-    kubectl::kustomize "$kind_platform" "./examples/kcp-certs/platform"
+
+    log "Deploy resource-broker-operator"
+    make docker-build-operator || die "Failed to build resource-broker-operator docker image"
+    make kind-load-operator KIND_CLUSTER=broker-platform \
+        || die "Failed to load resource-broker-operator into kind cluster"
+    make deploy-operator KUBECONFIG="$kind_platform" || die "Failed to deploy resource-broker-operator"
 
     log "Setting up kcp"
+    kubectl::kustomize "$kind_platform" "./examples/kcp-certs/platform"
     kcp::setup::kubeconfigs \
         "$kind_platform" \
         "$kubeconfigs/kcp-admin.kubeconfig" \
@@ -143,43 +149,16 @@ _provider_setup_new() {
     # Create a secret with the kubeconfig, this will be pulled by the
     # broker.
     kubectl::kubeconfig::secret "$ws_kubeconfig" "$ws_vw" "$name" default "broker-platform-control-plane:32443"
-
-    # # Bind the AcceptAPI from the platform workspace and instantiate it with
-    # # the certificates resources.
-    # kcp::apibinding "$ws_kubeconfig" root:platform acceptapis \
-    #     secrets "" get,list,watch \
-    #     events "" '*' \
-    #     namespaces "" '*'
-
-    # {
-    #     echo "apiVersion: broker.platform-mesh.io/v1alpha1"
-    #     echo "kind: AcceptAPI"
-    #     echo "metadata:"
-    #     echo "  name: acceptapis.broker.platform-mesh.io"
-    #     echo "  annotations:"
-    #     echo "    broker.platform-mesh.io/secret-name: kubeconfig-$name"
-    #     echo "spec:"
-    #     echo "  gvr:"
-    #     echo "    group: example.platform-mesh.io"
-    #     echo "    version: v1alpha1"
-    #     echo "    resource: certificates"
-    #     echo "  filters:"
-    #     echo "    - key: fqdn"
-    #     echo "      suffix: $suffix"
-    # } | kubectl::apply "$ws_kubeconfig" "-"
-
 }
 
 _start_broker() {
     log "Starting broker"
 
-    docker build -t resource-broker:kcp -f contrib/kcp/Dockerfile . \
-        || die "Failed to build resource-broker image"
-    image_id="$(docker inspect resource-broker:kcp --format '{{.ID}}')"
-    image_id="${image_id//sha256:/}"
-    docker tag "resource-broker:kcp" "resource-broker:${image_id}"
-    kind load docker-image "resource-broker:$image_id" --name broker-platform \
-        || die "Failed to load resource-broker image into kind cluster"
+    log "Deploy resource-broker"
+    docker build -t resource-broker-kcp:dev -f contrib/kcp/Dockerfile . \
+        || die "Failed to build resource-broker-kcp image"
+    kind load docker-image "resource-broker-kcp:dev" --name broker-platform \
+        || die "Failed to load resource-broker-kcp image into kind cluster"
 
     # Grab the new kubeconfig for the operator, targeting the platform
     # workspace. This will be mounted into the resource-broker pod.
@@ -192,52 +171,16 @@ _start_broker() {
         "$kubeconfigs/operator.kubeconfig" \
         || die "Failed to modify operator kubeconfig server URL"
 
-    kubectl create secret generic kcp-kubeconfig --dry-run=client -o yaml \
+    kubectl create secret generic kcp-kubeconfig --namespace=resource-broker-system --dry-run=client -o yaml \
         --from-file=kubeconfig="$kubeconfigs/operator.kubeconfig" \
         | kubectl::apply "$kind_platform" "-"
 
-    {
-        echo 'apiVersion: apps/v1'
-        echo 'kind: Deployment'
-        echo 'metadata:'
-        echo '  name: resource-broker'
-        echo '  namespace: default'
-        echo 'spec:'
-        echo '  replicas: 1'
-        echo '  selector:'
-        echo '    matchLabels:'
-        echo '      app: resource-broker'
-        echo '  template:'
-        echo '    metadata:'
-        echo '      labels:'
-        echo '        app: resource-broker'
-        echo '    spec:'
-        echo '      containers:'
-        echo '      - name: resource-broker'
-        echo "        image: resource-broker:${image_id}"
-        echo '        args:'
-        echo '        - "-kubeconfig=/kubeconfig/kubeconfig"'
-        echo '        - "-kcp-kubeconfig=/kubeconfig/kubeconfig"'
-        echo '        - "-acceptapi=acceptapis"'
-        echo '        - "-brokerapi=certificates"'
-        echo '        - "-zap-devel=true"'
-        echo '        - "-watch-kind=Certificate.v1alpha1.example.platform-mesh.io"'
-        echo '        volumeMounts:'
-        echo '        - name: kubeconfig-volume'
-        echo '          mountPath: /kubeconfig'
-        echo '          readOnly: true'
-        echo '      volumes:'
-        echo '      - name: kubeconfig-volume'
-        echo '        secret:'
-        echo '          secretName: kcp-kubeconfig'
-    } | kubectl::apply "$kind_platform" "-"
-    KUBECONFIG="$kind_platform" \
-        kubectl rollout status deployment/resource-broker -n default --timeout="$timeout" \
-        || die "Resource broker deployment failed to roll out"
+    kubectl::apply "$kind_platform" ./examples/kcp-certs/platform/broker.yaml
+    kubectl::wait "$kind_platform" broker/resource-broker resource-broker-system condition=Available
 }
 
 _stop_broker() {
-    kubectl::delete "$kind_platform" deployment/resource-broker
+    kubectl --kubeconfig "$kind_platform" delete -n resource-broker-system broker/resource-broker
 }
 
 _cleanup() {
@@ -275,7 +218,8 @@ _cleanup() {
 }
 
 _ci() {
-    kubectl --kubeconfig "$kind_platform" logs deployment/resource-broker > resource-broker.log
+    kubectl --kubeconfig "$kind_platform" logs -n resource-broker-system deployment/resource-broker-operator > resource-broker-operator.log
+    kubectl --kubeconfig "$kind_platform" logs -n resource-broker-system deployment/resource-broker > resource-broker.log
     kubectl --kubeconfig "$ws_consumer" get certificates.example.platform-mesh.io cert-from-consumer -o yaml > consumer-certificate.yaml
 
     kubectl --kubeconfig "$kind_internalca" logs deployment/api-syncagent > internalca-api-syncagent.log
@@ -295,11 +239,5 @@ case "$1" in
     (start-broker) _start_broker ;;
     (stop-broker) _stop_broker ;;
     (ci) _ci;;
-    ("")
-        _setup || die "Setup failed"
-        _start_broker || die "Starting broker failed"
-        _cleanup || die "Cleanup failed"
-        _run_example || die "Running example failed"
-        ;;
     (*) die "Unknown command: $1" ;;
 esac
