@@ -50,7 +50,7 @@ help: ## Display this help.
 .PHONY: manifests
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
 	$(CONTROLLER_GEN) crd rbac:roleName=resource-broker output:crd:dir=config/broker/crd output:rbac:dir=config/broker/rbac paths="./api/broker/..."
-	$(CONTROLLER_GEN) crd rbac:roleName=resource-broker output:crd:dir=config/example/crd output:rbac:dir=config/example/rbac paths="./api/example/..."
+	$(CONTROLLER_GEN) crd rbac:roleName=resource-broker-example output:crd:dir=config/example/crd output:rbac:dir=config/example/rbac paths="./api/example/..."
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.

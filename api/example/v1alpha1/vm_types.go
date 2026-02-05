@@ -23,6 +23,10 @@ import (
 	brokerv1alpha1 "github.com/platform-mesh/resource-broker/api/broker/v1alpha1"
 )
 
+// +kubebuilder:rbac:groups=example.platform-mesh.io,resources=vms,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=example.platform-mesh.io,resources=vms/status,verbs=get
+// +kubebuilder:rbac:groups=example.platform-mesh.io,resources=vms/finalizers,verbs=update
+
 // VMSpec defines the desired state of VM.
 type VMSpec struct {
 	// The architecture of the VM.

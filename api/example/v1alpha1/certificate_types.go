@@ -21,6 +21,10 @@ import (
 	brokerv1alpha1 "github.com/platform-mesh/resource-broker/api/broker/v1alpha1"
 )
 
+// +kubebuilder:rbac:groups=example.platform-mesh.io,resources=certificates,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=example.platform-mesh.io,resources=certificates/status,verbs=get
+// +kubebuilder:rbac:groups=example.platform-mesh.io,resources=certificates/finalizers,verbs=update
+
 // CertificateSpec defines the desired state of Certificate.
 type CertificateSpec struct {
 	// fqdn is the fully qualified domain name for the certificate.
