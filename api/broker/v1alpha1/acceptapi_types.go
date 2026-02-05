@@ -27,6 +27,10 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
+// +kubebuilder:rbac:groups=broker.platform-mesh.io,resources=acceptapis,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=broker.platform-mesh.io,resources=acceptapis/status,verbs=get
+// +kubebuilder:rbac:groups=broker.platform-mesh.io,resources=acceptapis/finalizers,verbs=update
+
 // AcceptAPISpec defines the desired state of AcceptAPI.
 type AcceptAPISpec struct {
 	// GVR is the GroupVersionResource of the API to accept.

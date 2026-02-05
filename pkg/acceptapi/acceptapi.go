@@ -59,10 +59,6 @@ func ReconcilerFunc(opts Options) mcreconcile.Func {
 	}
 }
 
-// +kubebuilder:rbac:groups=broker.platform-mesh.io,resources=acceptapis,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=broker.platform-mesh.io,resources=acceptapis/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=broker.platform-mesh.io,resources=acceptapis/finalizers,verbs=update
-
 const acceptAPIFinalizer = "broker.platform-mesh.io/acceptapi-finalizer"
 
 type reconciler struct {

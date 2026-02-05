@@ -1,9 +1,0 @@
-apiVersion: example.platform-mesh.io/v1alpha1
-kind: Certificate
-metadata:
-  labels:
-    app.kubernetes.io/name: resource-broker
-    app.kubernetes.io/managed-by: kustomize
-  name: certificate-sample
-spec:
-  # TODO(user): Add fields here

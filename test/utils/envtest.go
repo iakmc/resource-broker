@@ -61,7 +61,8 @@ func DefaultEnvTest(t testing.TB, opts ...EnvOption) (*envtest.Environment, *res
 	e := &envtest.Environment{
 		BinaryAssetsDirectory: os.Getenv("KUBEBUILDER_ASSETS"),
 		CRDDirectoryPaths: []string{
-			filepath.Join(gitRoot, "config", "crd", "bases"),
+			filepath.Join(gitRoot, "config", "broker", "crd"),
+			filepath.Join(gitRoot, "config", "example", "crd"),
 		},
 		ErrorIfCRDPathMissing: true,
 	}

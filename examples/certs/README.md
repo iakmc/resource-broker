@@ -280,6 +280,7 @@ kubectl --kubeconfig ./kubeconfigs/consumer.kubeconfig patch certificate cert-fr
 ```bash ci
 kubectl::wait ./kubeconfigs/externalca.kubeconfig certificates.example.platform-mesh.io/cert-from-consumer default create
 kubectl::wait ./kubeconfigs/externalca.kubeconfig certificates.cert-manager.io/cert-from-consumer default create
+kubectl::wait ./kubeconfigs/externalca.kubeconfig certificates.cert-manager.io/cert-from-consumer default condition=Ready
 ```
 -->
 
@@ -287,6 +288,7 @@ resource-broker will first create the Certificate in the ExternalCA provider:
 
 <!--
 ```bash ci
+kubectl::wait ./kubeconfigs/externalca.kubeconfig certificates.cert-manager.io/cert-from-consumer default create
 kubectl::wait ./kubeconfigs/externalca.kubeconfig certificates.cert-manager.io/cert-from-consumer default condition=Ready
 ```
 -->
