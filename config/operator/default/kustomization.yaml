@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: resource-broker-system
+resources:
+- ../crd
+- ../rbac
+- ../../broker/rbac # for the resource-broker sa, cluster role and binding
+- deployment.yaml
+
+images:
+- name: operator
+  newName: ghcr.io/platform-mesh/resource-broker-operator
+  newTag: latest
