@@ -2,6 +2,7 @@ group "default" {
   targets = [
     "resource-broker",
     "resource-broker-kcp",
+    "resource-broker-operator",
   ]
 }
 
@@ -38,6 +39,17 @@ target "resource-broker-kcp" {
   context = "."
   dockerfile = "contrib/kcp/Dockerfile"
   tags = [for tag in target.docker-metadata-action.tags : "${REGISTRY}/${ORG}/resource-broker-kcp:${tag}"]
+  platforms = [
+    "linux/amd64",
+    "linux/arm64",
+  ]
+}
+
+target "resource-broker-operator" {
+  inherits = ["docker-metadata-action"]
+  context = "."
+  dockerfile = "cmd/operator/Dockerfile"
+  tags = [for tag in target.docker-metadata-action.tags : "${REGISTRY}/${ORG}/resource-broker-operator:${tag}"]
   platforms = [
     "linux/amd64",
     "linux/arm64",
