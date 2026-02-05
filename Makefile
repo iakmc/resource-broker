@@ -145,6 +145,16 @@ docker-push: ## Push docker image with the manager.
 docker-push-operator: ## Push docker image with the operator.
 	$(CONTAINER_TOOL) push ${IMG_OPERATOR}
 
+KIND_CLUSTER ?= kind
+
+.PHONY: kind-load
+kind-load: ## Load docker image with the broker into kind cluster. Set cluster name with KIND_CLUSTER.
+	kind load docker-image --name "$(KIND_CLUSTER)" "${IMG}"
+
+.PHONY: kind-load-operator
+kind-load-operator: ## Load docker image with the operator into kind cluster. Set cluster name with KIND_CLUSTER.
+	kind load docker-image --name "$(KIND_CLUSTER)" "${IMG_OPERATOR}"
+
 .PHONY: docker-bake
 docker-bake: ## Build docker images with cross-platform support
 	@echo "If this fails your docker likely doesn't use containerd as the storage backend"
