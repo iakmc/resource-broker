@@ -137,14 +137,6 @@ docker-build: ## Build docker image with the manager.
 docker-build-operator: ## Build docker image with the operator.
 	$(CONTAINER_TOOL) build -t ${IMG_OPERATOR} -f cmd/operator/Dockerfile .
 
-.PHONY: docker-push
-docker-push: ## Push docker image with the manager.
-	$(CONTAINER_TOOL) push ${IMG}
-
-.PHONY: docker-push-operator
-docker-push-operator: ## Push docker image with the operator.
-	$(CONTAINER_TOOL) push ${IMG_OPERATOR}
-
 KIND_CLUSTER ?= kind
 
 .PHONY: kind-load
