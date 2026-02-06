@@ -1,0 +1,8 @@
+apiVersion: operator.broker.platform-mesh.io/v1alpha1
+kind: Broker
+metadata:
+  name: certificates
+  namespace: resource-broker-system
+spec:
+  extraArgs:
+    - --with-kind=Certificates.v1alpha1.example.platform-mesh.io

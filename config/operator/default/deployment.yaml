@@ -1,0 +1,18 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: resource-broker-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: resource-broker-operator
+  template:
+    metadata:
+      labels:
+        app: resource-broker-operator
+    spec:
+      serviceAccountName: resource-broker-operator
+      containers:
+        - name: resource-broker-operator
+          image: operator

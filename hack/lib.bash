@@ -384,7 +384,8 @@ kubectl::kubeconfig::secret() {
     local kubeconfig="$1"
     local target="$2"
     local name="$3"
-    local hostname="$4"
+    local namespace="$4"
+    local hostname="$5"
 
     cp "$target" "$target.tmp"
     target="$target.tmp"
@@ -394,7 +395,7 @@ kubectl::kubeconfig::secret() {
         kubeconfig::hostname::set "$target" "$cur_hostname" "$hostname"
     fi
 
-    kubectl create secret generic "kubeconfig-$name" --dry-run=client -o yaml \
+    kubectl create secret generic "kubeconfig-$name" --namespace="$namespace" --dry-run=client -o yaml \
         --from-file=kubeconfig="$target" \
         | kubectl::apply "$kubeconfig" "-"
     rm -f "$target"

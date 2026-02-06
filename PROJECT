@@ -6,8 +6,6 @@ domain: platform-mesh.io
 layout:
 - go.kubebuilder.io/v4
 multigroup: true
-plugins:
-  helm.kubebuilder.io/v1-alpha: {}
 projectName: resource-broker
 repo: github.com/platform-mesh/resource-broker
 resources:
@@ -52,5 +50,13 @@ resources:
   group: example
   kind: Certificate
   path: github.com/platform-mesh/resource-broker/api/example/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  domain: platform-mesh.io
+  group: operator
+  kind: Broker
+  path: github.com/platform-mesh/resource-broker/api/operator/v1alpha1
   version: v1alpha1
 version: "3"
