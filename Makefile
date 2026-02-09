@@ -84,7 +84,7 @@ test: manifests generate fmt vet ## Run tests.
 .PHONY: test-e2e
 test-e2e: manifests generate fmt vet setup-envtest ## Run the e2e tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" \
-		go test ./test/e2e/... $(TEST_ARGS)
+		go test ./test/e2e/... -coverprofile cover-e2e.out $(TEST_ARGS)
 
 GOLANGCI_LINT_CONFIG ?= $(PWD)/.golangci.yml
 
