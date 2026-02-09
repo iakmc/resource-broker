@@ -32,13 +32,9 @@ rules:
   resources:
   - acceptapis
   - migrationconfigurations
-  - migrations
   verbs:
-  - create
-  - delete
   - get
   - list
-  - patch
   - update
   - watch
 - apiGroups:
@@ -53,12 +49,24 @@ rules:
   - broker.platform-mesh.io
   resources:
   - acceptapis/status
+  - migrationconfigurations/status
   verbs:
   - get
 - apiGroups:
   - broker.platform-mesh.io
   resources:
-  - migrationconfigurations/status
+  - migrations
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - broker.platform-mesh.io
+  resources:
   - migrations/status
   verbs:
   - get
