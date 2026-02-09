@@ -4,11 +4,7 @@ metadata:
   name: root
 spec:
   image:
-    # There's a bug that the IP of the pod and the default 6443 port is
-    # used as the VW base url. This doesn't work with kcp running in
-    # a kube cluster, which uses :6443 itself. This is fixed in main but
-    # not in the release version kcp-operator deploys.
-    tag: 8dae1f51e
+    tag: v0.30.0
   # The shardBaseURL is the NodePort service exposing the root shard.
   # Required for other kind clusters to access the virtual workspaces.
   shardBaseURL: https://broker-platform-control-plane:32111
