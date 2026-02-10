@@ -31,3 +31,5 @@ rules:
   - vms/status
   verbs:
   - get
+  - patch
+  - update

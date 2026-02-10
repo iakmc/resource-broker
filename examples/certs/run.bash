@@ -29,16 +29,19 @@ _setup() {
     helm::install::kro "$kind_internalca"
     helm::install::certmanager "$kind_internalca"
     kubectl::kustomize "$kind_internalca" "$example_dir/internalca"
+    kubectl::apply "$kind_internalca" "$example_dir/provider-rbac.yaml"
 
     log "Setting up provider externalca"
     kind::cluster externalca "$kind_externalca"
     helm::install::kro "$kind_externalca"
     helm::install::certmanager "$kind_externalca"
     kubectl::kustomize "$kind_externalca" "$example_dir/externalca"
+    kubectl::apply "$kind_externalca" "$example_dir/provider-rbac.yaml"
 
     log "Setting up consumer consumer"
     kind::cluster consumer "$kind_consumer"
     kubectl::kustomize "$kind_consumer" "$example_dir/consumer"
+    kubectl::apply "$kind_consumer" "$example_dir/consumer/broker-rbac.yaml"
 }
 
 _start_broker() {
@@ -53,9 +56,18 @@ _start_broker() {
     make deploy-operator KUBECONFIG="$kind_platform" || die "Failed to deploy resource-broker-operator"
 
     kubectl::kubeconfig::secret "$kind_platform" "$kind_platform" platform resource-broker-system broker-platform-control-plane:6443
-    kubectl::kubeconfig::secret "$kind_platform" "$kind_consumer" consumer resource-broker-system broker-consumer-control-plane:6443
-    kubectl::kubeconfig::secret "$kind_platform" "$kind_internalca" internalca resource-broker-system broker-internalca-control-plane:6443
-    kubectl::kubeconfig::secret "$kind_platform" "$kind_externalca" externalca resource-broker-system broker-externalca-control-plane:6443
+
+    local sa_consumer="$kubeconfigs/consumer-sa.kubeconfig"
+    kubectl::serviceaccount::kubeconfig "$kind_consumer" resource-broker default "$sa_consumer" broker-consumer-control-plane:6443
+    kubectl::kubeconfig::secret "$kind_platform" "$sa_consumer" consumer resource-broker-system
+
+    local sa_internalca="$kubeconfigs/internalca-sa.kubeconfig"
+    kubectl::serviceaccount::kubeconfig "$kind_internalca" resource-broker default "$sa_internalca" broker-internalca-control-plane:6443
+    kubectl::kubeconfig::secret "$kind_platform" "$sa_internalca" internalca resource-broker-system
+
+    local sa_externalca="$kubeconfigs/externalca-sa.kubeconfig"
+    kubectl::serviceaccount::kubeconfig "$kind_externalca" resource-broker default "$sa_externalca" broker-externalca-control-plane:6443
+    kubectl::kubeconfig::secret "$kind_platform" "$sa_externalca" externalca resource-broker-system
 
     kubectl::kustomize "$kind_platform" "$example_dir/platform"
     kubectl::wait "$kind_platform" broker/resource-broker resource-broker-system condition=Available

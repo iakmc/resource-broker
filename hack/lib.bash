@@ -654,6 +654,43 @@ kcp::serviceaccount::admin() {
         || die "Failed to create token for service account $sa_name in namespace $namespace"
 }
 
+kubectl::serviceaccount::kubeconfig() {
+    local target_kubeconfig="$1"
+    local sa_name="$2"
+    local namespace="$3"
+    local output_kubeconfig="$4"
+    local hostname="$5"
+    [[ -z "$namespace" ]] && namespace="default"
+
+    local token="$(kubectl --kubeconfig "$target_kubeconfig" create token "$sa_name" --namespace "$namespace" --duration=5208h)" \
+        || die "Failed to create token for service account $sa_name in namespace $namespace"
+
+    local url="$(kubectl::kubeconfig::current_server_url "$target_kubeconfig")"
+    if [[ -n "$hostname" ]]; then
+        # Replace the hostname in the URL for in-cluster access
+        local scheme="${url%%://*}"
+        url="${scheme}://${hostname}"
+    fi
+
+    local ca_data="$(kubectl --kubeconfig "$target_kubeconfig" config view --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')"
+
+    kubeconfig::create::bare "$output_kubeconfig"
+    if [[ -n "$ca_data" ]]; then
+        KUBECONFIG="$output_kubeconfig" \
+            kubectl config set-cluster default --server="$url" \
+            || die "Failed to set cluster in kubeconfig $output_kubeconfig"
+        # Set CA data directly via yq since kubectl doesn't have a flag for it
+        yq -i ".clusters[0].cluster.certificate-authority-data = \"$ca_data\"" "$output_kubeconfig"
+    else
+        KUBECONFIG="$output_kubeconfig" \
+            kubectl config set-cluster default --insecure-skip-tls-verify=true --server="$url" \
+            || die "Failed to set cluster in kubeconfig $output_kubeconfig"
+    fi
+    KUBECONFIG="$output_kubeconfig" \
+        kubectl config set-credentials default --token="$token" \
+        || die "Failed to set user credentials in kubeconfig $output_kubeconfig"
+}
+
 kubeconfig::create::bare() {
     local kubeconfig="$1"
 

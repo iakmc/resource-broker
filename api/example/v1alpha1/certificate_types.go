@@ -22,7 +22,7 @@ import (
 )
 
 // +kubebuilder:rbac:groups=example.platform-mesh.io,resources=certificates,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=example.platform-mesh.io,resources=certificates/status,verbs=get
+// +kubebuilder:rbac:groups=example.platform-mesh.io,resources=certificates/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=example.platform-mesh.io,resources=certificates/finalizers,verbs=update
 
 // CertificateSpec defines the desired state of Certificate.

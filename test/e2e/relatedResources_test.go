@@ -40,8 +40,12 @@ func TestRelatedResources(t *testing.T) {
 	t.Parallel()
 
 	frame := NewFrame(t)
-	consumer := frame.NewConsumer(t, "consumer")
-	provider := frame.NewProvider(t, "provider")
+	rules := append(
+		resourceRules("example.platform-mesh.io", "vms"),
+		resourceRules("", "configmaps")...,
+	)
+	consumer := frame.NewConsumer(t, "consumer", consumerRules(rules...))
+	provider := frame.NewProvider(t, "provider", providerRules(rules...))
 
 	t.Log("Create AcceptAPI in provider control plane")
 	err := provider.Cluster.GetClient().Create(
