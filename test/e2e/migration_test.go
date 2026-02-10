@@ -42,6 +42,8 @@ func TestMigrationNoStages(t *testing.T) {
 	t.Parallel()
 
 	frame := NewFrame(t)
+	vmRules := resourceRules("example.platform-mesh.io", "vms")
+	frame.Coordination.AddUser(t, "broker", coordinationRules(vmRules...))
 
 	mgrOptions := frame.Options(t)
 	mgrOptions.WatchKinds = []string{"VM.v1alpha1.example.platform-mesh.io"}
@@ -82,7 +84,7 @@ func TestMigrationNoStages(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Log("Create x86_64 provider and AcceptAPI")
-	x86Provider := frame.NewProvider(t, "x86")
+	x86Provider := frame.NewProvider(t, "x86", providerRules(vmRules...))
 	err = x86Provider.Cluster.GetClient().Create(
 		t.Context(),
 		&brokerv1alpha1.AcceptAPI{
@@ -108,7 +110,7 @@ func TestMigrationNoStages(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Log("Create arm64 provider and AcceptAPI")
-	armProvider := frame.NewProvider(t, "arm64")
+	armProvider := frame.NewProvider(t, "arm64", providerRules(vmRules...))
 	err = armProvider.Cluster.GetClient().Create(
 		t.Context(),
 		&brokerv1alpha1.AcceptAPI{
@@ -265,6 +267,8 @@ func TestMigrationWithStages(t *testing.T) {
 	t.Parallel()
 
 	frame := NewFrame(t)
+	vmRules := resourceRules("example.platform-mesh.io", "vms")
+	frame.Coordination.AddUser(t, "broker", coordinationRules(vmRules...))
 
 	mgrOptions := frame.Options(t)
 	mgrOptions.WatchKinds = []string{"VM.v1alpha1.example.platform-mesh.io"}
@@ -324,7 +328,7 @@ func TestMigrationWithStages(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Log("Create x86_64 provider and AcceptAPI")
-	x86Provider := frame.NewProvider(t, "x86")
+	x86Provider := frame.NewProvider(t, "x86", providerRules(vmRules...))
 	err = x86Provider.Cluster.GetClient().Create(
 		t.Context(),
 		&brokerv1alpha1.AcceptAPI{
@@ -350,7 +354,7 @@ func TestMigrationWithStages(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Log("Create arm64 provider and AcceptAPI")
-	armProvider := frame.NewProvider(t, "arm64")
+	armProvider := frame.NewProvider(t, "arm64", providerRules(vmRules...))
 	err = armProvider.Cluster.GetClient().Create(
 		t.Context(),
 		&brokerv1alpha1.AcceptAPI{
@@ -379,7 +383,7 @@ func TestMigrationWithStages(t *testing.T) {
 	vmNamespace := "default" //nolint:goconst,nolintlint
 
 	t.Log("Create Consumer with one VM")
-	consumer := frame.NewConsumer(t, "consumer")
+	consumer := frame.NewConsumer(t, "consumer", consumerRules(vmRules...))
 	err = consumer.Cluster.GetClient().Create(
 		t.Context(),
 		&examplev1alpha1.VM{

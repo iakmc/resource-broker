@@ -39,8 +39,9 @@ func TestManagerCopy(t *testing.T) {
 	t.Parallel()
 
 	frame := NewFrame(t)
-	provider := frame.NewProvider(t, "provider")
-	consumer := frame.NewConsumer(t, "consumer")
+	cmRules := resourceRules("", "configmaps")
+	provider := frame.NewProvider(t, "provider", providerRules(cmRules...))
+	consumer := frame.NewConsumer(t, "consumer", consumerRules(cmRules...))
 
 	t.Log("Create AcceptAPI in provider control plane")
 	err := provider.Cluster.GetClient().Create(
