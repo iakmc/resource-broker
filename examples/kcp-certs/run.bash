@@ -37,7 +37,9 @@ _setup() {
     helm::install::kcp "$kind_platform"
 
     log "Deploy resource-broker-operator"
-    make docker-build-operator || die "Failed to build resource-broker-operator docker image"
+    if [[ -z "$CI" ]]; then
+        make docker-build-operator || die "Failed to build resource-broker-operator docker image"
+    fi
     make kind-load-operator KIND_CLUSTER=broker-platform \
         || die "Failed to load resource-broker-operator into kind cluster"
     make deploy-operator KUBECONFIG="$kind_platform" || die "Failed to deploy resource-broker-operator"
@@ -155,9 +157,10 @@ _start_broker() {
     log "Starting broker"
 
     log "Deploy resource-broker"
-    docker build -t resource-broker-kcp:dev -f contrib/kcp/Dockerfile . \
-        || die "Failed to build resource-broker-kcp image"
-    kind load docker-image "resource-broker-kcp:dev" --name broker-platform \
+    if [[ -z "$CI" ]]; then
+        make docker-build-kcp || die "Failed to build resource-broker-kcp docker image"
+    fi
+    make kind-load-kcp KIND_CLUSTER=broker-platform \
         || die "Failed to load resource-broker-kcp image into kind cluster"
 
     # Grab the new kubeconfig for the operator, targeting the platform
