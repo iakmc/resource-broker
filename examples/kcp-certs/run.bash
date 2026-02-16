@@ -192,19 +192,30 @@ _cleanup() {
     log "Cleaning up example resources in consumer vw"
     kubectl::delete "$vw_consumer" certificates.example.platform-mesh.io/cert-from-consumer
 
-    log "Cleaning up example resources in internalca vw"
-    kubectl::delete "$kubeconfigs/workspaces/internalca.vw.kubeconfig" certificates.example.platform-mesh.io/cert-from-consumer
-    kubectl --kubeconfig "$kubeconfigs/workspaces/internalca.vw.kubeconfig" delete secrets -A --selector kro.run/owned=true
-    log "Cleaning up example resources in internalca provider"
-    kubectl --kubeconfig "$kind_internalca" delete certificates.example.platform-mesh.io -A --all
-    kubectl --kubeconfig "$kind_internalca" delete secrets -A --selector kro.run/owned=true
+    # api-syncagent creates its own names and namespaces, so query them
+    local provider_cert provider_ns
 
-    log "Cleaning up example resources in externalca vw"
-    kubectl::delete "$kubeconfigs/workspaces/externalca.vw.kubeconfig" certificates.example.platform-mesh.io/cert-from-consumer
-    kubectl --kubeconfig "$kubeconfigs/workspaces/externalca.vw.kubeconfig" delete secrets -A --selector kro.run/owned=true
-    log "Cleaning up example resources in externalca provider"
-    kubectl --kubeconfig "$kind_externalca" delete certificates.example.platform-mesh.io -A --all
-    kubectl --kubeconfig "$kind_externalca" delete secrets -A --selector kro.run/owned=true
+    log "Cleaning up example resources in internalca"
+    provider_cert="$(kubectl --kubeconfig "$kind_internalca" get certificates.example.platform-mesh.io -A -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)" || true
+    provider_ns="$(kubectl --kubeconfig "$kind_internalca" get certificates.example.platform-mesh.io -A -o jsonpath='{.items[0].metadata.namespace}' 2>/dev/null)" || true
+    if [[ -n "$provider_cert" ]]; then
+        kubectl::delete "$kubeconfigs/workspaces/internalca.vw.kubeconfig" "certificates.example.platform-mesh.io/$provider_cert"
+        kubectl --kubeconfig "$kind_internalca" delete --ignore-not-found -n "$provider_ns" \
+            "certificates.example.platform-mesh.io/$provider_cert"
+        kubectl --kubeconfig "$kind_internalca" delete --ignore-not-found -n "$provider_ns" \
+            --selector kro.run/owned=true secrets
+    fi
+
+    log "Cleaning up example resources in externalca"
+    provider_cert="$(kubectl --kubeconfig "$kind_externalca" get certificates.example.platform-mesh.io -A -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)" || true
+    provider_ns="$(kubectl --kubeconfig "$kind_externalca" get certificates.example.platform-mesh.io -A -o jsonpath='{.items[0].metadata.namespace}' 2>/dev/null)" || true
+    if [[ -n "$provider_cert" ]]; then
+        kubectl::delete "$kubeconfigs/workspaces/externalca.vw.kubeconfig" "certificates.example.platform-mesh.io/$provider_cert"
+        kubectl --kubeconfig "$kind_externalca" delete --ignore-not-found -n "$provider_ns" \
+            "certificates.example.platform-mesh.io/$provider_cert"
+        kubectl --kubeconfig "$kind_externalca" delete --ignore-not-found -n "$provider_ns" \
+            --selector kro.run/owned=true secrets
+    fi
 
     log "Cleaning up Certificate APIBindings and APIExports"
     kubectl --kubeconfig "$ws_consumer" delete apibinding certificates

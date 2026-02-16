@@ -133,16 +133,18 @@ kubectl --kubeconfig ./kubeconfigs/consumer.kubeconfig apply -f ./examples/certs
 <!--
 ```bash ci
 source ./hack/lib.bash
-kubectl::wait ./kubeconfigs/internalca.kubeconfig certificates.example.platform-mesh.io/cert-from-consumer default create
-kubectl::wait ./kubeconfigs/internalca.kubeconfig certificates.cert-manager.io/cert-from-consumer default create
-kubectl::wait ./kubeconfigs/internalca.kubeconfig certificates.cert-manager.io/cert-from-consumer default condition=Ready
+consumer_cluster="consumer#/kubeconfigs/consumer/kubeconfig+default"
+provider_cert="$(echo -n "$consumer_cluster" | sha256sum | cut -c1-12)-cert-from-consumer"
+kubectl::wait ./kubeconfigs/internalca.kubeconfig certificates.example.platform-mesh.io/$provider_cert default create
+kubectl::wait ./kubeconfigs/internalca.kubeconfig certificates.cert-manager.io/$provider_cert default create
+kubectl::wait ./kubeconfigs/internalca.kubeconfig certificates.cert-manager.io/$provider_cert default condition=Ready
 ```
 -->
 
 This will be picked up by resource-broker and sent to the InternalCA provider:
 
 ```bash ci
-kubectl --kubeconfig ./kubeconfigs/internalca.kubeconfig get certificates.example.platform-mesh.io cert-from-consumer -o yaml
+kubectl --kubeconfig ./kubeconfigs/internalca.kubeconfig get certificates.example.platform-mesh.io "$provider_cert" -o yaml
 ```
 
 ```yaml
@@ -154,7 +156,7 @@ metadata:
   - broker.platform-mesh.io/generic-finalizer
   - kro.run/finalizer
   # ...
-  name: cert-from-consumer
+  name: d480f64dc494-cert-from-consumer
   namespace: default
   # ...
 spec:
@@ -167,7 +169,7 @@ status:
         group: core
         kind: Secret
         version: v1
-      name: cert-from-consumer
+      name: d480f64dc494-cert-from-consumer
       namespace: default
   state: ACTIVE
   status: Available
@@ -186,7 +188,7 @@ items:
   kind: Certificate
   metadata:
     # ...
-    name: cert-from-consumer
+    name: d480f64dc494-cert-from-consumer
     namespace: default
     # ...
   spec:
@@ -216,7 +218,7 @@ items:
       blockOwnerDeletion: true
       controller: true
       kind: Certificate
-      name: cert-from-consumer
+      name: d480f64dc494-cert-from-consumer
       uid: f6010fea-e5b6-4be7-b6c3-b57165dc2588
     # ...
   type: kubernetes.io/tls
@@ -280,9 +282,9 @@ kubectl --kubeconfig ./kubeconfigs/consumer.kubeconfig patch certificate cert-fr
 
 <!--
 ```bash ci
-kubectl::wait ./kubeconfigs/externalca.kubeconfig certificates.example.platform-mesh.io/cert-from-consumer default create
-kubectl::wait ./kubeconfigs/externalca.kubeconfig certificates.cert-manager.io/cert-from-consumer default create
-kubectl::wait ./kubeconfigs/externalca.kubeconfig certificates.cert-manager.io/cert-from-consumer default condition=Ready
+kubectl::wait ./kubeconfigs/externalca.kubeconfig certificates.example.platform-mesh.io/$provider_cert default create
+kubectl::wait ./kubeconfigs/externalca.kubeconfig certificates.cert-manager.io/$provider_cert default create
+kubectl::wait ./kubeconfigs/externalca.kubeconfig certificates.cert-manager.io/$provider_cert default condition=Ready
 ```
 -->
 
@@ -290,8 +292,8 @@ resource-broker will first create the Certificate in the ExternalCA provider:
 
 <!--
 ```bash ci
-kubectl::wait ./kubeconfigs/externalca.kubeconfig certificates.cert-manager.io/cert-from-consumer default create
-kubectl::wait ./kubeconfigs/externalca.kubeconfig certificates.cert-manager.io/cert-from-consumer default condition=Ready
+kubectl::wait ./kubeconfigs/externalca.kubeconfig certificates.cert-manager.io/$provider_cert default create
+kubectl::wait ./kubeconfigs/externalca.kubeconfig certificates.cert-manager.io/$provider_cert default condition=Ready
 ```
 -->
 
@@ -311,7 +313,7 @@ items:
     - broker.platform-mesh.io/generic-finalizer
     - kro.run/finalizer
     # ..
-    name: cert-from-consumer
+    name: d480f64dc494-cert-from-consumer
     namespace: default
     # ..
   spec:
@@ -324,7 +326,7 @@ items:
           group: core
           kind: Secret
           version: v1
-        name: cert-from-consumer
+        name: d480f64dc494-cert-from-consumer
         namespace: default
     state: ACTIVE
     status: Available
@@ -333,7 +335,7 @@ items:
   kind: Certificate
   metadata:
     # ...
-    name: cert-from-consumer
+    name: d480f64dc494-cert-from-consumer
     namespace: default
     # ..
   spec:
@@ -364,7 +366,7 @@ items:
       blockOwnerDeletion: true
       controller: true
       kind: Certificate
-      name: cert-from-consumer
+      name: d480f64dc494-cert-from-consumer
     # ...
   type: kubernetes.io/tls
 kind: List
@@ -376,7 +378,7 @@ And then delete it from the InternalCA provider:
 
 <!--
 ```bash ci
-kubectl::wait ./kubeconfigs/internalca.kubeconfig certificates.example.platform-mesh.io/cert-from-consumer default delete
+kubectl::wait ./kubeconfigs/internalca.kubeconfig certificates.example.platform-mesh.io/$provider_cert default delete
 ```
 -->
 

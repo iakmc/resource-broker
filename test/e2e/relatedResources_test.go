@@ -32,6 +32,7 @@ import (
 	brokerv1alpha1 "github.com/platform-mesh/resource-broker/api/broker/v1alpha1"
 	examplev1alpha1 "github.com/platform-mesh/resource-broker/api/example/v1alpha1"
 	"github.com/platform-mesh/resource-broker/cmd/manager"
+	"github.com/platform-mesh/resource-broker/pkg/broker/generic"
 )
 
 // TestRelatedResources tests that related resources are copied from
@@ -97,12 +98,13 @@ func TestRelatedResources(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Log("Wait for VM to appear in provider control plane")
+	providerVMName := generic.SanitizeClusterName("consumer#consumer#cluster") + "-" + vmName
 	vm := &examplev1alpha1.VM{}
 	require.Eventually(t, func() bool {
 		err := provider.Cluster.GetClient().Get(
 			t.Context(),
 			types.NamespacedName{
-				Name:      vmName,
+				Name:      providerVMName,
 				Namespace: namespace,
 			},
 			vm,
@@ -111,7 +113,7 @@ func TestRelatedResources(t *testing.T) {
 			t.Logf("error getting VM from provider control plane: %v", err)
 			return false
 		}
-		return vm.Name == vmName
+		return vm.Name == providerVMName
 	}, wait.ForeverTestTimeout, time.Second)
 
 	t.Log("Create related ConfigMap in provider control plane")
@@ -138,7 +140,7 @@ func TestRelatedResources(t *testing.T) {
 		err := provider.Cluster.GetClient().Get(
 			t.Context(),
 			types.NamespacedName{
-				Name:      vmName,
+				Name:      providerVMName,
 				Namespace: namespace,
 			},
 			vm,
