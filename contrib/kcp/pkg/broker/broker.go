@@ -32,7 +32,6 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -50,8 +49,8 @@ import (
 	brokerv1alpha1 "github.com/platform-mesh/resource-broker/api/broker/v1alpha1"
 	kcpacceptapi "github.com/platform-mesh/resource-broker/contrib/kcp/pkg/acceptapi"
 	"github.com/platform-mesh/resource-broker/pkg/broker"
-	brokergeneric "github.com/platform-mesh/resource-broker/pkg/generic"
-	"github.com/platform-mesh/resource-broker/pkg/migration"
+	genericreconciler "github.com/platform-mesh/resource-broker/pkg/broker/generic"
+	"github.com/platform-mesh/resource-broker/pkg/broker/migration"
 )
 
 // Options are the options for creating a Broker.
@@ -134,7 +133,8 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 
 	multiProvider := multi.New(multi.Options{})
 
-	// ------------- kcp acceptapi
+	/////////////////////////////////////////////////////////////////////////////
+	// AcceptAPI Controller
 
 	// The kcp AcceptAPI provider watches the VW of the AcceptAPI export and
 	// produces provider clusters.
@@ -218,7 +218,8 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 		return nil, fmt.Errorf("error adding acceptapi provider to multi provider: %w", err)
 	}
 
-	// ------------- migration
+	/////////////////////////////////////////////////////////////////////////////
+	// Migration Controllers
 
 	b.migrationConfigurations = make(map[metav1.GroupVersionKind]map[metav1.GroupVersionKind]brokerv1alpha1.MigrationConfiguration)
 	// using the migrationScheme for both migration and migration config
@@ -248,33 +249,32 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 	if err := migrationMgr.GetLocalManager().Add(manager.RunnableFunc(migrationCluster.Start)); err != nil {
 		return nil, fmt.Errorf("error adding migration coordination cluster to migration manager: %w", err)
 	}
+
 	// b.managers["migration"] = migrationMgr
-	if err := mcbuilder.ControllerManagedBy(migrationMgr).
-		Named(b.opts.Name + "-migration-configuration").
-		For(&brokerv1alpha1.MigrationConfiguration{}).
-		Complete(
-			migration.ConfigurationReconcilerFunc(
-				migration.ConfigurationOptions{
-					GetCluster: migrationMgr.GetCluster, // migration configurations can only come from the migration coordination cluster
-					SetMigrationConfiguration: func(from metav1.GroupVersionKind, to metav1.GroupVersionKind, config brokerv1alpha1.MigrationConfiguration) {
-						b.lock.Lock()
-						defer b.lock.Unlock()
-						if _, ok := b.migrationConfigurations[from]; !ok {
-							b.migrationConfigurations[from] = make(map[metav1.GroupVersionKind]brokerv1alpha1.MigrationConfiguration)
-						}
-						b.migrationConfigurations[from][to] = config
-					},
-					DeleteMigrationConfiguration: func(from metav1.GroupVersionKind, to metav1.GroupVersionKind) {
-						b.lock.Lock()
-						defer b.lock.Unlock()
-						delete(b.migrationConfigurations[from], to)
-						if len(b.migrationConfigurations[from]) == 0 {
-							delete(b.migrationConfigurations, from)
-						}
-					},
-				}),
-		); err != nil {
-		return nil, fmt.Errorf("failed to create migration configuration reconciler: %w", err)
+
+	migrationConfigOptions := migration.ConfigurationOptions{
+		GetCluster:           migrationMgr.GetCluster, // migration configurations can only come from the migration coordination cluster
+		ControllerNamePrefix: b.opts.Name,
+		SetMigrationConfiguration: func(from metav1.GroupVersionKind, to metav1.GroupVersionKind, config brokerv1alpha1.MigrationConfiguration) {
+			b.lock.Lock()
+			defer b.lock.Unlock()
+			if _, ok := b.migrationConfigurations[from]; !ok {
+				b.migrationConfigurations[from] = make(map[metav1.GroupVersionKind]brokerv1alpha1.MigrationConfiguration)
+			}
+			b.migrationConfigurations[from][to] = config
+		},
+		DeleteMigrationConfiguration: func(from metav1.GroupVersionKind, to metav1.GroupVersionKind) {
+			b.lock.Lock()
+			defer b.lock.Unlock()
+			delete(b.migrationConfigurations[from], to)
+			if len(b.migrationConfigurations[from]) == 0 {
+				delete(b.migrationConfigurations, from)
+			}
+		},
+	}
+
+	if err := migration.SetupConfigurationController(migrationMgr, migrationConfigOptions); err != nil {
+		return nil, fmt.Errorf("failed to create migration reconciler: %w", err)
 	}
 
 	computeClient, err := client.New(b.opts.ComputeConfig, client.Options{
@@ -284,35 +284,34 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 		return nil, fmt.Errorf("error creating compute client: %w", err)
 	}
 
-	if err := mcbuilder.ControllerManagedBy(migrationMgr).
-		Named(b.opts.Name + "-migration").
-		For(&brokerv1alpha1.Migration{}).
-		Complete(
-			migration.MigrationReconcilerFunc(migration.MigrationOptions{
-				Compute:                computeClient,
-				GetCoordinationCluster: migrationMgr.GetCluster,
-				GetProviderCluster: func(ctx context.Context, clusterName string) (cluster.Cluster, error) {
-					if !strings.HasPrefix(clusterName, broker.ProviderPrefix) {
-						return nil, fmt.Errorf("cluster %q is not a provider cluster: %w", clusterName, multicluster.ErrClusterNotFound)
-					}
-					return multiProvider.Get(ctx, clusterName)
-				},
-				GetMigrationConfiguration: func(fromGVK metav1.GroupVersionKind, toGVK metav1.GroupVersionKind) (brokerv1alpha1.MigrationConfiguration, bool) {
-					b.lock.RLock()
-					defer b.lock.RUnlock()
-					toMap, ok := b.migrationConfigurations[fromGVK]
-					if !ok {
-						return brokerv1alpha1.MigrationConfiguration{}, false
-					}
-					v, ok := toMap[toGVK]
-					return v, ok
-				},
-			}),
-		); err != nil {
+	migrationOptions := migration.MigrationOptions{
+		Compute:                computeClient,
+		ControllerNamePrefix:   b.opts.Name,
+		GetCoordinationCluster: migrationMgr.GetCluster,
+		GetProviderCluster: func(ctx context.Context, clusterName string) (cluster.Cluster, error) {
+			if !strings.HasPrefix(clusterName, broker.ProviderPrefix) {
+				return nil, fmt.Errorf("cluster %q is not a provider cluster: %w", clusterName, multicluster.ErrClusterNotFound)
+			}
+			return multiProvider.Get(ctx, clusterName)
+		},
+		GetMigrationConfiguration: func(fromGVK metav1.GroupVersionKind, toGVK metav1.GroupVersionKind) (brokerv1alpha1.MigrationConfiguration, bool) {
+			b.lock.RLock()
+			defer b.lock.RUnlock()
+			toMap, ok := b.migrationConfigurations[fromGVK]
+			if !ok {
+				return brokerv1alpha1.MigrationConfiguration{}, false
+			}
+			v, ok := toMap[toGVK]
+			return v, ok
+		},
+	}
+
+	if err := migration.SetupController(migrationMgr, migrationOptions); err != nil {
 		return nil, fmt.Errorf("failed to create migration reconciler: %w", err)
 	}
 
-	// ------------- general broker
+	/////////////////////////////////////////////////////////////////////////////
+	// Generic Sync Controllers
 
 	// The BrokerAPI provider watches the VW of the BrokerAPI export and
 	// produces consumer clusters.
@@ -340,8 +339,9 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 	}
 	b.managers["general"] = generalMgr
 
-	genericOpts := brokergeneric.Options{
-		Coordination: migrationClient,
+	genericOpts := genericreconciler.Options{
+		CoordinationClient:   migrationClient,
+		ControllerNamePrefix: b.opts.Name,
 		GetProviderCluster: func(ctx context.Context, clusterName string) (cluster.Cluster, error) {
 			if !strings.HasPrefix(clusterName, broker.ProviderPrefix) {
 				return nil, fmt.Errorf("cluster %q is not a provider cluster: %w", clusterName, multicluster.ErrClusterNotFound)
@@ -386,12 +386,7 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 	}
 
 	for _, gvk := range broker.ParseKinds(b.opts.WatchKinds) {
-		obj := &unstructured.Unstructured{}
-		obj.SetGroupVersionKind(gvk)
-		if err := mcbuilder.ControllerManagedBy(generalMgr).
-			Named(b.opts.Name + "-generic-" + gvk.String()).
-			For(obj).
-			Complete(brokergeneric.ReconcileFunc(genericOpts, gvk)); err != nil {
+		if err := genericreconciler.SetupController(generalMgr, gvk, genericOpts); err != nil {
 			return nil, fmt.Errorf("failed to create generic reconciler for %v: %w", gvk, err)
 		}
 	}
