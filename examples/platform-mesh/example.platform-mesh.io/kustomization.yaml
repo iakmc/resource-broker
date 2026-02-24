@@ -1,0 +1,5 @@
+resources:
+  - apiexport-acceptapis.yaml
+  - apiexport-certificates.yaml
+  - content-configuration.yaml
+  - provider-metadata.yaml
