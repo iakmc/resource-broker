@@ -78,19 +78,23 @@ _stop_broker() {
 }
 
 _cleanup() {
+    local consumer_cluster
+    consumer_cluster="consumer#$(kubectl --kubeconfig "$kind_consumer" config current-context)"
+    local hash
+    hash=$(echo -n "$consumer_cluster" | sha256sum | cut -c1-12)
+    local provider_cert="${hash}-cert-from-consumer"
+
     kubectl::delete "$kind_consumer" \
         certificates.example.platform-mesh.io/cert-from-consumer \
         secret/cert-from-consumer
 
     kubectl::delete "$kind_internalca" \
-        certificates.example.platform-mesh.io/cert-from-consumer \
-        certificates.cert-manager.io/cert-from-consumer \
-        secret/cert-from-consumer
+        "certificates.example.platform-mesh.io/$provider_cert" \
+        "secret/$provider_cert"
 
     kubectl::delete "$kind_externalca" \
-        certificates.example.platform-mesh.io/cert-from-consumer \
-        certificates.cert-manager.io/cert-from-consumer \
-        secret/cert-from-consumer
+        "certificates.example.platform-mesh.io/$provider_cert" \
+        "secret/$provider_cert"
     return 0
 }
 

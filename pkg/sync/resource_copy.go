@@ -78,25 +78,28 @@ func EqualObjects(a, b *unstructured.Unstructured) bool {
 }
 
 // CopyResource copies a resource from source to target and reflects the
-// status back.
+// status back. The sourceName and targetName parameters allow the resource
+// to have different names in the source and target clusters.
 func CopyResource(
 	ctx context.Context,
 	gvk schema.GroupVersionKind,
-	name types.NamespacedName,
+	sourceName, targetName types.NamespacedName,
 	source, target client.Client,
 ) (metav1.Condition, error) {
 	sourceObj := &unstructured.Unstructured{}
 	sourceObj.SetGroupVersionKind(gvk)
 
-	if err := source.Get(ctx, name, sourceObj); err != nil {
+	if err := source.Get(ctx, sourceName, sourceObj); err != nil {
 		return makeCond(ConditionResourceCopied, false, "GetSourceFailed", err.Error()), err
 	}
 
 	existing := &unstructured.Unstructured{}
 	existing.SetGroupVersionKind(gvk)
-	if err := target.Get(ctx, name, existing); err != nil {
+	if err := target.Get(ctx, targetName, existing); err != nil {
 		if errors.IsNotFound(err) {
 			targetObj := StripClusterMetadata(sourceObj)
+			targetObj.SetName(targetName.Name)
+			targetObj.SetNamespace(targetName.Namespace)
 			if err := target.Create(ctx, targetObj); err != nil {
 				return makeCond(ConditionResourceCopied, false, "CreateFailed", err.Error()), err
 			}
@@ -123,9 +126,11 @@ func CopyResource(
 	}
 
 	if status, ok := existing.Object["status"]; ok {
-		sourceObj.Object["status"] = status
-		if err := source.Status().Update(ctx, sourceObj); err != nil {
-			return makeCond(ConditionStatusSynced, false, "StatusUpdateFailed", err.Error()), err
+		if !cmp.Equal(sourceObj.Object["status"], status, cmpopts.EquateEmpty()) {
+			sourceObj.Object["status"] = status
+			if err := source.Status().Update(ctx, sourceObj); err != nil {
+				return makeCond(ConditionStatusSynced, false, "StatusUpdateFailed", err.Error()), err
+			}
 		}
 	}
 

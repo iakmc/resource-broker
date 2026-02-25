@@ -315,7 +315,65 @@ spec:
 kubectl --kubeconfig="./kubeconfigs/workspaces/consumer.kubeconfig" apply -f ./examples/kcp-certs/cert.yaml
 ```
 
-The resource-broker will see the Certificate in the virtual workspace of the APIExport, pass it to a matching provider. Since the fqdn is `app.internal.corp` the InternalCA provider will issue the certificate:
+The resource-broker will see the Certificate in the virtual workspace of the APIExport, pass it to a matching provider. Since the fqdn is `app.internal.corp` the InternalCA provider will issue the certificate.
+
+> [!NOTE]
+> Provider-side resource names are prefixed with a hash of the consumer cluster name to prevent
+> naming conflicts when multiple consumers create resources with the same name.
+> The original consumer-side name `cert-from-consumer` becomes `{hash}-cert-from-consumer` in
+> the provider's virtual workspace.
+
+In the provider's virtual workspace the Certificate looks like this.
+
+Grab the hash-prefixed name from the VW:
+
+<!--
+Wait for the certificate to appear in the provider's virtual workspace:
+```bash ci
+kubectl::wait::list \
+    kubeconfigs/workspaces/internalca.vw.kubeconfig \
+    certificates.example.platform-mesh.io \
+    --all-namespaces
+```
+-->
+
+```bash ci
+provider_cert="$(kubectl --kubeconfig kubeconfigs/workspaces/internalca.vw.kubeconfig get certificates.example.platform-mesh.io -A -o jsonpath="{.items[0].metadata.name}")"
+```
+
+```bash ci
+kubectl --kubeconfig kubeconfigs/workspaces/internalca.vw.kubeconfig get certificates.example.platform-mesh.io "$provider_cert" -o yaml
+```
+
+```yaml
+apiVersion: v1
+items:
+- apiVersion: example.platform-mesh.io/v1alpha1
+  kind: Certificate
+  metadata:
+    # ...
+    name: {hash}-cert-from-consumer
+    namespace: default
+    # ...
+  spec:
+    fqdn: app.internal.corp
+  status:
+    # ...
+    relatedResources:
+      secret:
+        gvk:
+          group: core
+          kind: Secret
+          version: v1
+        name: {hash}-cert-from-consumer
+        namespace: default
+    # ...
+kind: List
+metadata:
+  resourceVersion: ""
+```
+
+On the compute cluster, api-syncagent further transforms the name using its own cluster IDs and hashes:
 
 <!--
 ```bash ci
@@ -326,12 +384,9 @@ kubectl::wait::list \
 ```
 -->
 
-
 ```bash ci
 kubectl --kubeconfig kubeconfigs/internalca.kubeconfig get certificates.example.platform-mesh.io --all-namespaces
 ```
-
-For synchronisation api-syncagent is used, which uses the cluster IDs and hashes to uniquely name the resources:
 
 ```
 NAMESPACE          NAME                                        STATE    SYNCED   AGE
@@ -362,7 +417,7 @@ items:
           group: core
           kind: Secret
           version: v1
-        name: 2747cabbb481a433679f-42b4d6246cf320c6cee5
+        name: {hash}-cert-from-consumer
         namespace: default
     # ...
 kind: List
@@ -370,7 +425,7 @@ metadata:
   resourceVersion: ""
 ```
 
-Grab the name and namespace:
+Grab the name and namespace from the compute cluster:
 
 ```bash ci
 secret_name="$(kubectl --kubeconfig kubeconfigs/internalca.kubeconfig get certificates.example.platform-mesh.io --all-namespaces -o jsonpath="{.items[0].metadata.name}")"
@@ -382,7 +437,7 @@ Wait for the certificate to be issued.
 ```bash ci
 kubectl::wait::cert::subject \
     kubeconfigs/internalca.kubeconfig \
-    "$secret_name" \
+    "$provider_cert" \
     "$secret_namespace" \
     "app.internal.corp"
 ```
@@ -399,7 +454,7 @@ kubectl --kubeconfig kubeconfigs/internalca.kubeconfig get secrets --namespace "
 Decoding the `tls.crt` field shows the certificate was correctly issued for `app.internal.corp`:
 
 ```bash ci
-kubectl --kubeconfig kubeconfigs/internalca.kubeconfig get secrets --namespace "$secret_namespace" "$secret_name" -o jsonpath="{.data.tls\.crt}" \
+kubectl --kubeconfig kubeconfigs/internalca.kubeconfig get secrets --namespace "$secret_namespace" "$provider_cert" -o jsonpath="{.data.tls\.crt}" \
     | base64 --decode \
     | openssl x509 -noout -subject
 # subject=CN=app.internal.corp
@@ -412,27 +467,27 @@ Wait for the certificate secret to be synced:
 ```bash ci
 kubectl::wait::cert::subject \
     kubeconfigs/workspaces/consumer.kubeconfig \
-    "$secret_name" \
+    "cert-from-consumer" \
     "default" \
     "app.internal.corp"
 ```
 -->
 
 ```bash ci
-kubectl --kubeconfig kubeconfigs/workspaces/consumer.kubeconfig get secrets "$secret_name"
+kubectl --kubeconfig kubeconfigs/workspaces/consumer.kubeconfig get secrets "cert-from-consumer"
 ```
 
 And comparing the serial number shows it's the same certificate:
 
 ```bash ci
 kubectl --kubeconfig kubeconfigs/internalca.kubeconfig \
-    get secrets --namespace "$secret_namespace" "$secret_name" \
+    get secrets --namespace "$secret_namespace" "$provider_cert" \
         -o jsonpath="{.data.tls\.crt}" \
     | base64 --decode \
     | openssl x509 -noout -serial
 # serial=0E7311D15E34081A8F1FD7447F1FF4C7BC055238
 kubectl --kubeconfig kubeconfigs/workspaces/consumer.kubeconfig \
-    get secrets "$secret_name" \
+    get secrets "cert-from-consumer" \
         -o jsonpath="{.data.tls\.crt}" \
     | base64 --decode \
     | openssl x509 -noout -serial
@@ -470,16 +525,43 @@ kubectl::wait::list \
 ```
 -->
 
+Grab the hash-prefixed name from the externalca VW:
+
+<!--
+Wait for the certificate to appear in the externalca provider's virtual workspace:
+```bash ci
+kubectl::wait::list \
+    kubeconfigs/workspaces/externalca.vw.kubeconfig \
+    certificates.example.platform-mesh.io \
+    --all-namespaces
+```
+-->
+
+```bash ci
+provider_cert="$(kubectl --kubeconfig kubeconfigs/workspaces/externalca.vw.kubeconfig get certificates.example.platform-mesh.io -A -o jsonpath="{.items[0].metadata.name}")"
+```
+
 ```bash ci
 secret_name="$(kubectl --kubeconfig kubeconfigs/externalca.kubeconfig get certificates.example.platform-mesh.io --all-namespaces -o jsonpath="{.items[0].metadata.name}")"
 secret_namespace="$(kubectl --kubeconfig kubeconfigs/externalca.kubeconfig get certificates.example.platform-mesh.io --all-namespaces -o jsonpath="{.items[0].metadata.namespace}")"
 ```
 
+<!--
+Wait for the certificate to be issued.
+```bash ci
+kubectl::wait::cert::subject \
+    kubeconfigs/externalca.kubeconfig \
+    "$provider_cert" \
+    "$secret_namespace" \
+    "app.corp.com"
+```
+-->
+
 And decoding the `tls.crt` field shows the certificate was correctly issued for `app.corp.com`:
 
 ```bash ci
 kubectl --kubeconfig kubeconfigs/externalca.kubeconfig \
-    get secrets --namespace "$secret_namespace" "$secret_name" \
+    get secrets --namespace "$secret_namespace" "$provider_cert" \
         -o jsonpath="{.data.tls\.crt}" \
     | base64 --decode \
     | openssl x509 -noout -subject
@@ -491,7 +573,7 @@ Wait for the certificate secret to be synced:
 ```bash ci
 kubectl::wait::cert::subject \
     kubeconfigs/workspaces/consumer.kubeconfig \
-    "$secret_name" \
+    "cert-from-consumer" \
     "default" \
     "app.corp.com"
 ```
@@ -501,7 +583,7 @@ And the secret in the consumer workspace has been updated accordingly:
 
 ```bash ci
 kubectl --kubeconfig kubeconfigs/workspaces/consumer.kubeconfig \
-    get secrets "$secret_name" \
+    get secrets "cert-from-consumer" \
         -o jsonpath="{.data.tls\.crt}" \
     | base64 --decode \
     | openssl x509 -noout -subject
@@ -512,13 +594,13 @@ And again comparing the serial numbers, now with the certificate in the external
 
 ```bash ci
 kubectl --kubeconfig kubeconfigs/externalca.kubeconfig \
-    get secrets --namespace "$secret_namespace" "$secret_name" \
+    get secrets --namespace "$secret_namespace" "$provider_cert" \
         -o jsonpath="{.data.tls\.crt}" \
     | base64 --decode \
     | openssl x509 -noout -serial
 # serial=204F68FCA700404CB7745D7A603BA5A28DC68E95
 kubectl --kubeconfig kubeconfigs/workspaces/consumer.kubeconfig \
-    get secrets "$secret_name" \
+    get secrets "cert-from-consumer" \
         -o jsonpath="{.data.tls\.crt}" \
     | base64 --decode \
     | openssl x509 -noout -serial

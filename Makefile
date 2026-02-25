@@ -93,7 +93,8 @@ EXAMPLES_PREFIX ?= $(patsubst %,example-%,$(EXAMPLES))
 .PHONY: examples
 examples: $(EXAMPLES_PREFIX) ## Run the examples.
 example-%: manifests generate fmt vet
-	go run github.com/ntnn/mdextract/cmd/mdextract@main -output run.bash -tags bash,ci ./examples/$*/README.md \
+	go get github.com/ntnn/mdextract
+	go run github.com/ntnn/mdextract@main -output run.bash -tags bash,ci ./examples/$*/README.md \
 		&& trap 'rm -f run.bash' EXIT \
 		&& bash -xe ./run.bash
 

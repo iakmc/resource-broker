@@ -34,6 +34,7 @@ import (
 	brokerv1alpha1 "github.com/platform-mesh/resource-broker/api/broker/v1alpha1"
 	examplev1alpha1 "github.com/platform-mesh/resource-broker/api/example/v1alpha1"
 	"github.com/platform-mesh/resource-broker/cmd/manager"
+	"github.com/platform-mesh/resource-broker/pkg/broker/generic"
 )
 
 // TestMigrationNoStages tests that migrations are created and processed
@@ -155,13 +156,15 @@ func TestMigrationNoStages(t *testing.T) {
 	)
 	require.NoError(t, err)
 
+	providerVMName := generic.SanitizeClusterName("consumer#consumer#cluster") + "-" + vmName
+
 	t.Log("Wait for VM to appear in x86 provider")
 	vm := &examplev1alpha1.VM{}
 	require.Eventually(t, func() bool {
 		err := x86Provider.Cluster.GetClient().Get(
 			t.Context(),
 			types.NamespacedName{
-				Name:      vmName,
+				Name:      providerVMName,
 				Namespace: vmNamespace,
 			},
 			vm,
@@ -226,7 +229,7 @@ func TestMigrationNoStages(t *testing.T) {
 		err := armProvider.Cluster.GetClient().Get(
 			t.Context(),
 			types.NamespacedName{
-				Name:      vmName,
+				Name:      providerVMName,
 				Namespace: vmNamespace,
 			},
 			vm,
@@ -243,7 +246,7 @@ func TestMigrationNoStages(t *testing.T) {
 		err := x86Provider.Cluster.GetClient().Get(
 			t.Context(),
 			types.NamespacedName{
-				Name:      vmName,
+				Name:      providerVMName,
 				Namespace: vmNamespace,
 			},
 			vm,
@@ -399,13 +402,15 @@ func TestMigrationWithStages(t *testing.T) {
 	)
 	require.NoError(t, err)
 
+	providerVMName := generic.SanitizeClusterName("consumer#consumer#cluster") + "-" + vmName
+
 	t.Log("Wait for VM to appear in x86 provider")
 	vm := &examplev1alpha1.VM{}
 	require.Eventually(t, func() bool {
 		err := x86Provider.Cluster.GetClient().Get(
 			t.Context(),
 			types.NamespacedName{
-				Name:      vmName,
+				Name:      providerVMName,
 				Namespace: vmNamespace,
 			},
 			vm,
@@ -453,7 +458,7 @@ func TestMigrationWithStages(t *testing.T) {
 		err := armProvider.Cluster.GetClient().Get(
 			t.Context(),
 			types.NamespacedName{
-				Name:      vmName,
+				Name:      providerVMName,
 				Namespace: vmNamespace,
 			},
 			vm,
@@ -471,7 +476,7 @@ func TestMigrationWithStages(t *testing.T) {
 		err := x86Provider.Cluster.GetClient().Get(
 			t.Context(),
 			types.NamespacedName{
-				Name:      vmName,
+				Name:      providerVMName,
 				Namespace: vmNamespace,
 			},
 			vm,

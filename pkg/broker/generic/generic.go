@@ -19,8 +19,12 @@ package generic
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/go-logr/logr"
 
@@ -45,6 +49,7 @@ import (
 const (
 	genericFinalizer      = "broker.platform-mesh.io/generic-finalizer"
 	consumerClusterAnn    = "broker.platform-mesh.io/consumer-cluster"
+	consumerNameAnn       = "broker.platform-mesh.io/consumer-name"
 	providerClusterAnn    = "broker.platform-mesh.io/provider-cluster"
 	newProviderClusterAnn = "broker.platform-mesh.io/new-provider-cluster"
 )
@@ -92,6 +97,44 @@ type objectReconcileTask struct {
 	providerCluster    cluster.Cluster
 	newProviderName    string
 	newProviderCluster cluster.Cluster
+
+	// consumerObjName holds the original NamespacedName of the resource
+	// in the consumer cluster. It is set when a reconcile is triggered from
+	// the provider side, where gr.req.NamespacedName contains the
+	// provider-side name (prefixed with hashed consumer cluster name).
+	consumerObjName *types.NamespacedName
+}
+
+// SanitizeClusterName hashes a cluster name into a 12-char hex string
+// safe for use in Kubernetes resource names.
+func SanitizeClusterName(name string) string {
+	h := sha256.Sum256([]byte(name))
+	return hex.EncodeToString(h[:6])
+}
+
+// providerNamespacedName returns the NamespacedName used to store the
+// resource in the provider cluster. The name is prefixed with a hash of
+// the consumer cluster name, keeping the namespace unchanged. This avoids
+// conflicts when multiple consumers create resources with the same name
+// and namespace.
+func (t *objectReconcileTask) providerNamespacedName() types.NamespacedName {
+	srcName := t.req.NamespacedName
+	if t.consumerObjName != nil {
+		srcName = *t.consumerObjName
+	}
+	return types.NamespacedName{
+		Namespace: srcName.Namespace,
+		Name:      SanitizeClusterName(t.consumerName) + "-" + srcName.Name,
+	}
+}
+
+// consumerNamespacedName returns the original (unprefixed) NamespacedName
+// of the resource in the consumer cluster.
+func (t *objectReconcileTask) consumerNamespacedName() types.NamespacedName {
+	if t.consumerObjName != nil {
+		return *t.consumerObjName
+	}
+	return t.req.NamespacedName
 }
 
 func (t *objectReconcileTask) Run(ctx context.Context) (mctrl.Result, error) {
@@ -163,7 +206,7 @@ func (t *objectReconcileTask) Run(ctx context.Context) (mctrl.Result, error) {
 		}
 		if !cont {
 			t.log.Info("Migration not yet ready to continue, waiting")
-			return mctrl.Result{}, nil
+			return mctrl.Result{RequeueAfter: time.Second}, nil
 		}
 
 		// Copy related resources from new provider when the cutover
@@ -178,11 +221,11 @@ func (t *objectReconcileTask) Run(ctx context.Context) (mctrl.Result, error) {
 
 		if state != brokerv1alpha1.MigrationStateCutoverCompleted {
 			t.log.Info("Migration not yet completed, waiting")
-			return mctrl.Result{}, nil
+			return mctrl.Result{RequeueAfter: time.Second}, nil
 		}
 
 		t.log.Info("Deleting from old provider")
-		if err := t.deleteObj(ctx, t.providerCluster); err != nil {
+		if err := t.deleteObj(ctx, t.providerCluster, t.providerNamespacedName()); err != nil {
 			return mctrl.Result{}, fmt.Errorf("failed to delete resource from old provider cluster %q: %w", t.providerName, err)
 		}
 
@@ -355,8 +398,13 @@ func (t *objectReconcileTask) setConsumerCluster(ctx context.Context, name strin
 
 func (t *objectReconcileTask) setConsumerClusterFromProvider(ctx context.Context) error {
 	t.log.Info("Determining consumer cluster from provider annotation")
-	providerObj, err := t.getProviderObj(ctx)
-	if err != nil {
+
+	// When the request comes from the provider side, t.req.NamespacedName
+	// contains the prefixed name. We can fetch the object directly since
+	// the provider cluster uses the prefixed name.
+	providerObj := &unstructured.Unstructured{}
+	providerObj.SetGroupVersionKind(t.gvk)
+	if err := t.providerCluster.GetClient().Get(ctx, t.req.NamespacedName, providerObj); err != nil {
 		if apierrors.IsNotFound(err) {
 			// If the provider object is not found, the consumer cluster
 			// cannot be set based on its annotation.
@@ -365,14 +413,25 @@ func (t *objectReconcileTask) setConsumerClusterFromProvider(ctx context.Context
 		return fmt.Errorf("failed to get resource from provider cluster %q: %w", t.providerName, err)
 	}
 
-	consumerNameAnn, ok := providerObj.GetAnnotations()[consumerClusterAnn]
-	if !ok || consumerNameAnn == "" {
+	anns := providerObj.GetAnnotations()
+
+	consumerCluster, ok := anns[consumerClusterAnn]
+	if !ok || consumerCluster == "" {
 		t.log.Info("Resource in provider cluster missing consumer cluster annotation, skipping")
 		return nil
 	}
 
-	t.log.Info("Found consumer cluster annotation in provider", "consumer", consumerNameAnn)
-	return t.setConsumerCluster(ctx, consumerNameAnn)
+	// Read the original consumer name from the annotation so that
+	// consumer-side lookups use the unprefixed name.
+	if origName, ok := anns[consumerNameAnn]; ok && origName != "" {
+		t.consumerObjName = &types.NamespacedName{
+			Namespace: t.req.Namespace,
+			Name:      origName,
+		}
+	}
+
+	t.log.Info("Found consumer cluster annotation in provider", "consumer", consumerCluster)
+	return t.setConsumerCluster(ctx, consumerCluster)
 }
 
 func (t *objectReconcileTask) setProviderCluster(ctx context.Context, name string) error {
@@ -432,7 +491,7 @@ func (t *objectReconcileTask) getGVR() (metav1.GroupVersionResource, error) {
 func (t *objectReconcileTask) getConsumerObj(ctx context.Context) (*unstructured.Unstructured, error) {
 	consumerObj := &unstructured.Unstructured{}
 	consumerObj.SetGroupVersionKind(t.gvk)
-	if err := t.consumerCluster.GetClient().Get(ctx, t.req.NamespacedName, consumerObj); err != nil {
+	if err := t.consumerCluster.GetClient().Get(ctx, t.consumerNamespacedName(), consumerObj); err != nil {
 		return nil, err
 	}
 	return consumerObj, nil
@@ -441,7 +500,7 @@ func (t *objectReconcileTask) getConsumerObj(ctx context.Context) (*unstructured
 func (t *objectReconcileTask) getProviderObj(ctx context.Context) (*unstructured.Unstructured, error) {
 	providerObj := &unstructured.Unstructured{}
 	providerObj.SetGroupVersionKind(t.gvk)
-	if err := t.providerCluster.GetClient().Get(ctx, t.req.NamespacedName, providerObj); err != nil {
+	if err := t.providerCluster.GetClient().Get(ctx, t.providerNamespacedName(), providerObj); err != nil {
 		return nil, err
 	}
 	return providerObj, nil
@@ -450,7 +509,7 @@ func (t *objectReconcileTask) getProviderObj(ctx context.Context) (*unstructured
 func (t *objectReconcileTask) getNewProviderObj(ctx context.Context) (*unstructured.Unstructured, error) {
 	newProviderObj := &unstructured.Unstructured{}
 	newProviderObj.SetGroupVersionKind(t.gvk)
-	if err := t.newProviderCluster.GetClient().Get(ctx, t.req.NamespacedName, newProviderObj); err != nil {
+	if err := t.newProviderCluster.GetClient().Get(ctx, t.providerNamespacedName(), newProviderObj); err != nil {
 		return nil, err
 	}
 	return newProviderObj, nil
@@ -458,13 +517,13 @@ func (t *objectReconcileTask) getNewProviderObj(ctx context.Context) (*unstructu
 
 func (t *objectReconcileTask) deleteObjs(ctx context.Context) error {
 	if t.providerCluster != nil {
-		if err := t.deleteObj(ctx, t.providerCluster); err != nil {
+		if err := t.deleteObj(ctx, t.providerCluster, t.providerNamespacedName()); err != nil {
 			return fmt.Errorf("failed to delete resource from provider cluster %q: %w", t.providerName, err)
 		}
 	}
 
 	if t.consumerCluster != nil {
-		if err := t.deleteObj(ctx, t.consumerCluster); err != nil {
+		if err := t.deleteObj(ctx, t.consumerCluster, t.consumerNamespacedName()); err != nil {
 			return fmt.Errorf("failed to delete resource from consumer cluster %q: %w", t.consumerName, err)
 		}
 	}
@@ -472,10 +531,10 @@ func (t *objectReconcileTask) deleteObjs(ctx context.Context) error {
 	return nil
 }
 
-func (t *objectReconcileTask) deleteObj(ctx context.Context, cl cluster.Cluster) error {
+func (t *objectReconcileTask) deleteObj(ctx context.Context, cl cluster.Cluster, name types.NamespacedName) error {
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(t.gvk)
-	if err := cl.GetClient().Get(ctx, t.req.NamespacedName, obj); err != nil {
+	if err := cl.GetClient().Get(ctx, name, obj); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil
 		}
@@ -512,23 +571,38 @@ func (t *objectReconcileTask) decorateInConsumer(ctx context.Context) error {
 		anns = make(map[string]string)
 	}
 
+	changed := false
 	switch t.providerName {
 	case "":
-		delete(anns, providerClusterAnn)
+		if _, ok := anns[providerClusterAnn]; ok {
+			delete(anns, providerClusterAnn)
+			changed = true
+		}
 	default:
-		anns[providerClusterAnn] = t.providerName
+		if anns[providerClusterAnn] != t.providerName {
+			anns[providerClusterAnn] = t.providerName
+			changed = true
+		}
 	}
 
 	switch t.newProviderName {
 	case "":
-		delete(anns, newProviderClusterAnn)
+		if _, ok := anns[newProviderClusterAnn]; ok {
+			delete(anns, newProviderClusterAnn)
+			changed = true
+		}
 	default:
-		anns[newProviderClusterAnn] = t.newProviderName
+		if anns[newProviderClusterAnn] != t.newProviderName {
+			anns[newProviderClusterAnn] = t.newProviderName
+			changed = true
+		}
 	}
 
-	consumerObj.SetAnnotations(anns)
-	if err := t.consumerCluster.GetClient().Update(ctx, consumerObj); err != nil {
-		return fmt.Errorf("failed to set annotations in consumer: %w", err)
+	if changed {
+		consumerObj.SetAnnotations(anns)
+		if err := t.consumerCluster.GetClient().Update(ctx, consumerObj); err != nil {
+			return fmt.Errorf("failed to set annotations in consumer: %w", err)
+		}
 	}
 
 	return nil
@@ -605,6 +679,7 @@ func (t *objectReconcileTask) migrate(ctx context.Context, consumerObj *unstruct
 	}
 
 	t.log.Info("No existing migration found, creating new migration")
+	providerNN := t.providerNamespacedName()
 	migration = &brokerv1alpha1.Migration{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      consumerObj.GetName(),      // TODO unique name?
@@ -613,14 +688,14 @@ func (t *objectReconcileTask) migrate(ctx context.Context, consumerObj *unstruct
 		Spec: brokerv1alpha1.MigrationSpec{
 			From: brokerv1alpha1.MigrationRef{
 				GVK:         migrationConfig.Spec.From,
-				Name:        consumerObj.GetName(),
-				Namespace:   consumerObj.GetNamespace(),
+				Name:        providerNN.Name,
+				Namespace:   providerNN.Namespace,
 				ClusterName: t.providerName,
 			},
 			To: brokerv1alpha1.MigrationRef{
 				GVK:         migrationConfig.Spec.To,
-				Name:        consumerObj.GetName(),
-				Namespace:   consumerObj.GetNamespace(),
+				Name:        providerNN.Name,
+				Namespace:   providerNN.Namespace,
 				ClusterName: t.newProviderName,
 			},
 		},
@@ -639,7 +714,7 @@ func (t *objectReconcileTask) migrate(ctx context.Context, consumerObj *unstruct
 func (t *objectReconcileTask) decorateInProvider(ctx context.Context, providerName string, providerCluster cluster.Cluster) error {
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(t.gvk)
-	if err := providerCluster.GetClient().Get(ctx, t.req.NamespacedName, obj); err != nil {
+	if err := providerCluster.GetClient().Get(ctx, t.providerNamespacedName(), obj); err != nil {
 		return fmt.Errorf("failed to get resource from provider cluster %q: %w", providerName, err)
 	}
 
@@ -649,9 +724,14 @@ func (t *objectReconcileTask) decorateInProvider(ctx context.Context, providerNa
 		}
 	}
 
-	kubernetes.SetAnnotation(obj, consumerClusterAnn, t.consumerName)
-	if err := providerCluster.GetClient().Update(ctx, obj); err != nil {
-		return fmt.Errorf("failed to set annotations in provider: %w", err)
+	consumerNN := t.consumerNamespacedName()
+	anns := obj.GetAnnotations()
+	if anns[consumerClusterAnn] != t.consumerName || anns[consumerNameAnn] != consumerNN.Name {
+		kubernetes.SetAnnotation(obj, consumerClusterAnn, t.consumerName)
+		kubernetes.SetAnnotation(obj, consumerNameAnn, consumerNN.Name)
+		if err := providerCluster.GetClient().Update(ctx, obj); err != nil {
+			return fmt.Errorf("failed to set annotations in provider: %w", err)
+		}
 	}
 	return nil
 }
@@ -686,7 +766,8 @@ func (t *objectReconcileTask) syncResource(ctx context.Context, providerName str
 	if cond, err := sync.CopyResource(
 		ctx,
 		t.gvk,
-		t.req.NamespacedName,
+		t.consumerNamespacedName(),
+		t.providerNamespacedName(),
 		t.consumerCluster.GetClient(),
 		providerCluster.GetClient(),
 	); err != nil {
@@ -721,7 +802,7 @@ func (t *objectReconcileTask) syncRelatedResources(ctx context.Context, provider
 	// TODO handle resource drift when a related resource is removed in
 	// the provider it needs to be removed in the consumer
 	// maybe just a finalizer on the resources in the provider?
-	relatedResources, err := sync.CollectRelatedResources(ctx, providerCluster.GetClient(), t.gvk, t.req.NamespacedName)
+	relatedResources, err := sync.CollectRelatedResources(ctx, providerCluster.GetClient(), t.gvk, t.providerNamespacedName())
 	if err != nil {
 		return fmt.Errorf("failed to collect related resources from provider cluster %q: %w", providerName, err)
 	}
@@ -764,14 +845,29 @@ func (t *objectReconcileTask) syncRelatedResource(ctx context.Context, providerC
 		return err
 	}
 
+	// Related resources on the provider may inherit the hashed prefix from
+	// the parent resource name. Strip the prefix so the consumer gets the
+	// original unprefixed name.
+	providerRRName := types.NamespacedName{
+		Namespace: relatedResource.Namespace,
+		Name:      relatedResource.Name,
+	}
+	consumerRRName := relatedResource.Name
+	prefix := SanitizeClusterName(t.consumerName) + "-"
+	if strings.HasPrefix(relatedResource.Name, prefix) {
+		consumerRRName = strings.TrimPrefix(relatedResource.Name, prefix)
+	}
+	consumerRRNN := types.NamespacedName{
+		Namespace: t.consumerNamespacedName().Namespace,
+		Name:      consumerRRName,
+	}
+
 	// TODO conditions
 	_, err := sync.CopyResource(
 		ctx,
 		relatedResource.SchemaGVK(),
-		types.NamespacedName{
-			Namespace: relatedResource.Namespace, // TODO namespace from consumer?
-			Name:      relatedResource.Name,
-		},
+		providerRRName,
+		consumerRRNN,
 		providerCluster.GetClient(),
 		t.consumerCluster.GetClient(),
 	)
@@ -785,10 +881,7 @@ func (t *objectReconcileTask) syncRelatedResource(ctx context.Context, providerC
 	consumerRRObj.SetGroupVersionKind(relatedResource.SchemaGVK())
 	if err := t.consumerCluster.GetClient().Get(
 		ctx,
-		client.ObjectKey{
-			Namespace: relatedResource.Namespace,
-			Name:      relatedResource.Name,
-		},
+		consumerRRNN,
 		consumerRRObj,
 	); err != nil {
 		log.Error(err, "Failed to get synced related resource from consumer cluster")

@@ -31,6 +31,7 @@ import (
 
 	brokerv1alpha1 "github.com/platform-mesh/resource-broker/api/broker/v1alpha1"
 	"github.com/platform-mesh/resource-broker/cmd/manager"
+	"github.com/platform-mesh/resource-broker/pkg/broker/generic"
 )
 
 // TestManagerCopy only tests that the manager can copy from a source to
@@ -92,12 +93,13 @@ func TestManagerCopy(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Log("Wait for ConfigMap to appear in provider control plane")
+	providerCMName := generic.SanitizeClusterName("consumer#consumer#cluster") + "-" + cmName
 	require.Eventually(t, func() bool {
 		cm := &corev1.ConfigMap{}
 		err := provider.Cluster.GetClient().Get(
 			t.Context(),
 			types.NamespacedName{
-				Name:      cmName,
+				Name:      providerCMName,
 				Namespace: namespace,
 			},
 			cm,
