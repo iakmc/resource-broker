@@ -106,7 +106,10 @@ jobs:
         run: |
           {
             echo -n 'examples=['
-            find examples -mindepth 1 -maxdepth 1 -type d -printf '"%f",'
+            for example in $(find examples -mindepth 1 -maxdepth 1 -type d -printf '%f '); do
+              [[ -f "examples/$example/.noexample" ]] && continue
+              echo -n "\"$example\","
+            done
             echo -n ']'
           } > "$GITHUB_OUTPUT"
           sed -i 's#,]#]#' "$GITHUB_OUTPUT"
