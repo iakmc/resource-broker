@@ -102,15 +102,23 @@ kubectl::wait::_list() {
 }
 
 kubectl::wait::list() {
+    local _kubeconfig="$1"
+    local _resource="$2"
     local retry_count=0
     local max_retries=360
     while [[ "$(kubectl::wait::_list "$@")" -eq 0 ]] ; do
         retry_count=$((retry_count + 1))
         if [[ $retry_count -ge $max_retries ]]; then
-            die "Timed out waiting for any resources '$resource' in '$namespace': $kubeconfig"
+            die "Timed out waiting for any resources '$_resource': $_kubeconfig"
+        fi
+        if [[ $((retry_count % 30)) -eq 0 ]]; then
+            log "Still waiting for '$_resource' ($retry_count/$max_retries)... kubeconfig=$_kubeconfig"
+            # Print additional debug info every 30 seconds
+            kubectl --kubeconfig "$_kubeconfig" get "$_resource" --all-namespaces 2>&1 || true
         fi
         sleep 1
     done
+    log "Found '$_resource' after $retry_count retries"
 }
 
 kubectl::wait::suffix() {
@@ -276,11 +284,9 @@ helm::install::api_syncagent() {
     fi
 
     helm::repo kcp  https://kcp-dev.github.io/helm-charts
-    helm::install "$kubeconfig" \
-        --namespace default \
-        api-syncagent kcp/api-syncagent \
+    helm::install "$kubeconfig" "api-syncagent-$agentName" kcp/api-syncagent \
         --version=0.4.5 \
-        --set namespace=default \
+        --set replicas=1 \
         --set apiExportName="$apiExportName" \
         --set agentName="$agentName" \
         --set kcpKubeconfig="$kcpKubeconfig" \
@@ -298,16 +304,34 @@ apisyncagent::publish() {
         die "resource, kind, group, and versions are required"
     fi
 
+    local name="$resource.$group"
+    local suffix=""
+    [[ -n "$AGENT_NAME" ]] && suffix="-$AGENT_NAME"
+
     {
         echo "apiVersion: syncagent.kcp.io/v1alpha1"
         echo "kind: PublishedResource"
         echo "metadata:"
-        echo "  name: $resource"
+        echo "  name: $name"
+        if [[ -n "$LABEL_KEY" ]] && [[ -n "$LABEL_VALUE" ]]; then
+            echo "  labels:"
+            echo "    $LABEL_KEY: $LABEL_VALUE"
+        fi
         echo "spec:"
         echo "  resource:"
         echo "    kind: $kind"
         echo "    apiGroup: $group"
         echo "    versions: [$versions]"
+        # TODO: This is really ugly but I don't want to copy/paste the
+        # function to maintain another version and I don't want to touch
+        # the old examples.
+        # This shouldn't even be a function in the first place :D
+        if [[ -n "$PROJECTION_GROUP" ]]; then
+            echo "  projection:"
+            echo "    group: $PROJECTION_GROUP"
+            echo "  naming:"
+            echo "    namespace: $AGENT_NAME-{{.ClusterName}}"
+        fi
         echo "  related:"
         while [[ "$#" -gt 0 ]]; do
             apisyncagent::publish::related "$@"
@@ -317,7 +341,7 @@ apisyncagent::publish() {
         echo "apiVersion: rbac.authorization.k8s.io/v1"
         echo "kind: ClusterRole"
         echo "metadata:"
-        echo "  name: api-syncagent:$resource"
+        echo "  name: api-syncagent$suffix:$resource"
         echo "rules:"
         echo "  - apiGroups:"
         echo "      - $group"
@@ -335,15 +359,15 @@ apisyncagent::publish() {
         echo "apiVersion: rbac.authorization.k8s.io/v1"
         echo "kind: ClusterRoleBinding"
         echo "metadata:"
-        echo "  name: api-syncagent:$resource"
+        echo "  name: api-syncagent$suffix:$resource"
         echo "roleRef:"
         echo "  apiGroup: rbac.authorization.k8s.io"
         echo "  kind: ClusterRole"
-        echo "  name: api-syncagent:$resource"
+        echo "  name: api-syncagent$suffix:$resource"
         echo "subjects:"
         echo "  - kind: ServiceAccount"
-        echo "    name: api-syncagent"
-        echo "    namespace: default"
+        echo "    name: api-syncagent$suffix"
+        echo "    namespace: ${NAMESPACE:-default}"
     } | kubectl::apply "$kubeconfig" -
 }
 
