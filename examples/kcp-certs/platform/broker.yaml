@@ -14,6 +14,7 @@ spec:
     - "-brokerapi=certificates"
     - "-zap-devel=true"
     - "-watch-kind=Certificate.v1alpha1.example.platform-mesh.io"
+    - "-workspace-tree-root=root:platform"    # new — replaces old host/port overrides
   volumes:
     - name: kubeconfig-volume
       secret:

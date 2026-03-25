@@ -16,38 +16,49 @@ limitations under the License.
 */
 
 // Package acceptapi implements a reconciler that watches
-// [brokerv1alpha1.AcceptAPI] resources in a kcp VW and provides the
-// resulting clusters as a [multicluster.Provider].
+// [brokerv1alpha1.AcceptAPI] resources in a kcp VW and registers the
+// provider's metadata (workspace path and APIExport name) so that the broker
+// can create staging workspaces on demand.
 package acceptapi
 
 import (
 	"context"
 	"fmt"
-	"net"
 	"net/url"
+	"strings"
 
 	"github.com/kcp-dev/multicluster-provider/apiexport"
+	corev1alpha1 "github.com/kcp-dev/sdk/apis/core/v1alpha1"
 
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/apis/meta/internalversion/scheme"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 
-	"sigs.k8s.io/controller-runtime/pkg/cluster"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
 	mctrl "sigs.k8s.io/multicluster-runtime"
-	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
-	"sigs.k8s.io/multicluster-runtime/providers/clusters"
 
 	brokerv1alpha1 "github.com/platform-mesh/resource-broker/api/broker/v1alpha1"
+)
+
+const (
+	kcpAcceptAPIFinalizer = "broker.platform-mesh.io/kcp-acceptapi-finalizer"
+
+	// AnnotationKCPPath is the annotation key used to store the provider
+	// workspace path on AcceptAPI objects in rb's in-memory registry.
+	// rb derives this value itself by reading the LogicalCluster singleton
+	// in the provider workspace — the provider does not need to set it.
+	AnnotationKCPPath = "kcp.io/path"
+
+	// AnnotationAPIExportName is the annotation providers set on their
+	// AcceptAPI objects to indicate which APIExport rb should bind in the
+	// per-consumer staging workspace.
+	AnnotationAPIExportName = "broker.platform-mesh.io/kcp-apiexport-name"
 )
 
 // Options defines the options for the AcceptAPI reconciler.
@@ -55,11 +66,8 @@ type Options struct {
 	KcpConfig       *rest.Config
 	APIExportName   string
 	Scheme          *runtime.Scheme
-	SetAcceptAPI    func(metav1.GroupVersionResource, multicluster.ClusterName, brokerv1alpha1.AcceptAPI)
-	DeleteAcceptAPI func(metav1.GroupVersionResource, multicluster.ClusterName, string)
-
-	HostOverride string
-	PortOverride string
+	SetAcceptAPI    func(metav1.GroupVersionResource, string, brokerv1alpha1.AcceptAPI)
+	DeleteAcceptAPI func(metav1.GroupVersionResource, string, string)
 }
 
 func (o *Options) validate() error {
@@ -70,7 +78,7 @@ func (o *Options) validate() error {
 		return fmt.Errorf("APIExportName is required")
 	}
 	if o.Scheme == nil {
-		o.Scheme = scheme.Scheme
+		return fmt.Errorf("scheme is required")
 	}
 	if o.SetAcceptAPI == nil {
 		return fmt.Errorf("SetAcceptAPI is required")
@@ -81,14 +89,12 @@ func (o *Options) validate() error {
 	return nil
 }
 
-const kcpAcceptAPIFinalizer = "broker.platform-mesh.io/kcp-acceptapi-finalizer"
-
 // Reconciler implements the kcp AcceptAPI reconciler.
 type Reconciler struct {
 	opts Options
 
-	Input  *apiexport.Provider
-	Output *clusters.Provider
+	Input      *apiexport.Provider
+	coreScheme *runtime.Scheme
 }
 
 // New creates a new AcceptAPI reconciler.
@@ -99,8 +105,11 @@ func New(opts Options) (*Reconciler, error) {
 
 	r := new(Reconciler)
 	r.opts = opts
-	r.Output = clusters.New()
-	r.Output.EqualClusters = areClustersEqual
+
+	r.coreScheme = runtime.NewScheme()
+	if err := corev1alpha1.AddToScheme(r.coreScheme); err != nil {
+		return nil, fmt.Errorf("unable to add core v1alpha1 to scheme: %w", err)
+	}
 
 	var err error
 	r.Input, err = apiexport.New(opts.KcpConfig, opts.APIExportName, apiexport.Options{
@@ -120,7 +129,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req mcreconcile.Request) (mc
 		"namespace", req.Namespace,
 		"name", req.Name,
 	)
-	log.Info("Reconciling AcceptAPI for VW provider")
+	log.Info("Reconciling AcceptAPI")
 
 	cl, err := r.Input.Get(ctx, req.ClusterName)
 	if err != nil {
@@ -139,9 +148,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req mcreconcile.Request) (mc
 	gvr := acceptAPI.Spec.GVR
 
 	if !acceptAPI.DeletionTimestamp.IsZero() {
-		log.Info("AcceptAPI is being deleted, removing VW provider")
-		r.opts.DeleteAcceptAPI(gvr, req.ClusterName, acceptAPI.Name)
-		r.Output.Remove(req.ClusterName)
+		log.Info("AcceptAPI is being deleted")
+		r.opts.DeleteAcceptAPI(gvr, string(req.ClusterName), acceptAPI.Name)
 		if controllerutil.RemoveFinalizer(acceptAPI, kcpAcceptAPIFinalizer) {
 			if err := cl.GetClient().Update(ctx, acceptAPI); err != nil {
 				return mctrl.Result{}, err
@@ -157,116 +165,73 @@ func (r *Reconciler) Reconcile(ctx context.Context, req mcreconcile.Request) (mc
 		}
 	}
 
-	secretName, ok := acceptAPI.Annotations["broker.platform-mesh.io/secret-name"]
-	if !ok || secretName == "" {
-		log.Error(nil, "AcceptAPI is missing broker.platform-mesh.io/secret-name annotation")
-		return mctrl.Result{}, fmt.Errorf("AcceptAPI %s/%s is missing broker.platform-mesh.io/secret-name annotation", acceptAPI.Namespace, acceptAPI.Name)
+	if acceptAPI.Annotations[AnnotationAPIExportName] == "" {
+		log.Error(nil, "AcceptAPI is missing broker.platform-mesh.io/kcp-apiexport-name annotation")
+		return mctrl.Result{}, fmt.Errorf("AcceptAPI %s/%s is missing %s annotation", acceptAPI.Namespace, acceptAPI.Name, AnnotationAPIExportName)
 	}
 
-	secret := &corev1.Secret{}
-	if err := cl.GetClient().Get(
-		ctx,
-		types.NamespacedName{
-			Namespace: "default",
-			Name:      secretName,
-		},
-		secret,
-	); err != nil {
-		log.Error(err, "Error getting kubeconfig secret")
-		return mctrl.Result{}, err
-	}
-
-	log = log.WithValues("secret", secret.Name)
-
-	log.Info("Found secret for cluster")
-	rawKubeconfig, ok := secret.Data["kubeconfig"]
-	if !ok {
-		log.Error(nil, "Secret is missing kubeconfig data")
-		return mctrl.Result{}, fmt.Errorf("secret %s/%s is missing kubeconfig data", secret.Namespace, secret.Name)
-	}
-
-	cfg, err := clientcmd.RESTConfigFromKubeConfig(rawKubeconfig)
+	// Derive the provider workspace path from the LogicalCluster singleton
+	// rather than requiring the provider to annotate it manually.
+	providerPath, err := r.lookupProviderPath(ctx, string(req.ClusterName))
 	if err != nil {
-		log.Error(err, "Error creating REST config from kubeconfig")
+		log.Error(err, "Failed to look up provider workspace path")
 		return mctrl.Result{}, err
 	}
-	log.Info("Parsed kubeconfig from secret", "cfg", cfg)
 
-	if r.opts.HostOverride != "" || r.opts.PortOverride != "" {
-		u, err := url.Parse(cfg.Host)
-		if err != nil {
-			log.Error(err, "Error parsing host from kubeconfig")
-			return mctrl.Result{}, err
-		}
-		host, port, err := net.SplitHostPort(u.Host)
-		if err != nil {
-			log.Error(err, "Error splitting host and port from kubeconfig host")
-			return mctrl.Result{}, err
-		}
-		if r.opts.HostOverride != "" {
-			host = r.opts.HostOverride
-		}
-		if r.opts.PortOverride != "" {
-			port = r.opts.PortOverride
-		}
-		u.Host = net.JoinHostPort(host, port)
-		cfg.Host = u.String()
+	if acceptAPI.Annotations == nil {
+		acceptAPI.Annotations = make(map[string]string)
 	}
+	acceptAPI.Annotations[AnnotationKCPPath] = providerPath
 
-	vwCluster, err := cluster.New(cfg,
-		func(o *cluster.Options) {
-			o.Scheme = r.opts.Scheme
-		},
+	log.Info("Registering AcceptAPI",
+		"providerPath", providerPath,
+		"apiExportName", acceptAPI.Annotations[AnnotationAPIExportName],
 	)
-	if err != nil {
-		log.Error(err, "Error creating VW cluster")
-		return mctrl.Result{}, err
-	}
+	r.opts.SetAcceptAPI(gvr, string(req.ClusterName), *acceptAPI)
 
-	// Force discovery cache population by querying the RESTMapper
-	// This ensures the discovery cache knows about the resources before we add the cluster to the provider
-	// We use KindFor which will trigger a full API discovery if the cache is empty
-	_, err = vwCluster.GetRESTMapper().KindFor(schema.GroupVersionResource{
-		Group:    gvr.Group,
-		Version:  gvr.Version,
-		Resource: gvr.Resource,
-	})
-	if err != nil {
-		log.Info("Discovery cache refresh failed, will retry", "error", err.Error(), "gvr", gvr)
-		// Don't fail here - the resource might not be immediately available
-		// The controller will retry and eventually succeed
-	} else {
-		log.Info("Successfully populated discovery cache", "gvr", gvr)
-	}
-
-	log.Info("Adding VW cluster to provider")
-	r.opts.SetAcceptAPI(gvr, req.ClusterName, *acceptAPI)
-	if err := r.Output.Add(ctx, req.ClusterName, vwCluster); err != nil {
-		log.Error(err, "Error adding VW cluster to provider")
-		return mctrl.Result{}, err
-	}
 	return mctrl.Result{}, nil
 }
 
-func areClustersEqual(cl1, cl2 cluster.Cluster) bool {
-	if cl1 == cl2 {
-		return true
+// lookupProviderPath fetches the workspace path for the given KCP logical
+// cluster ID by reading the LogicalCluster singleton resource directly in
+// that workspace. KCP sets kcp.io/path on the LogicalCluster to the
+// human-readable workspace path (e.g. "root:internalca").
+func (r *Reconciler) lookupProviderPath(ctx context.Context, clusterID string) (string, error) {
+	cfg, err := clusterDirectConfig(r.opts.KcpConfig, clusterID)
+	if err != nil {
+		return "", fmt.Errorf("failed to build cluster config for %q: %w", clusterID, err)
 	}
-	return areConfigsEqual(cl1.GetConfig(), cl2.GetConfig())
+
+	cl, err := client.New(cfg, client.Options{Scheme: r.coreScheme})
+	if err != nil {
+		return "", fmt.Errorf("failed to create client for cluster %q: %w", clusterID, err)
+	}
+
+	lc := &corev1alpha1.LogicalCluster{}
+	if err := cl.Get(ctx, types.NamespacedName{Name: "cluster"}, lc); err != nil {
+		return "", fmt.Errorf("failed to get LogicalCluster for cluster %q: %w", clusterID, err)
+	}
+
+	path := lc.Annotations[AnnotationKCPPath]
+	if path == "" {
+		return "", fmt.Errorf("LogicalCluster for cluster %q has no %s annotation", clusterID, AnnotationKCPPath)
+	}
+	return path, nil
 }
 
-func areConfigsEqual(cfg1, cfg2 *rest.Config) bool {
-	if cfg1 == nil || cfg2 == nil {
-		return cfg1 == cfg2
+// clusterDirectConfig derives a REST config that directly accesses the given
+// KCP logical cluster ID by replacing the cluster path segment in the base URL.
+func clusterDirectConfig(base *rest.Config, clusterID string) (*rest.Config, error) {
+	cfg := rest.CopyConfig(base)
+	u, err := url.Parse(cfg.Host)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse KCP host URL %q: %w", cfg.Host, err)
 	}
-	if cfg1.String() != cfg2.String() {
-		return false
+	idx := strings.Index(u.Path, "/clusters/")
+	if idx < 0 {
+		return nil, fmt.Errorf("KCP host URL %q does not contain /clusters/ path segment", cfg.Host)
 	}
-	if cfg1.Password != cfg2.Password {
-		return false
-	}
-	if cfg1.BearerToken != cfg2.BearerToken {
-		return false
-	}
-	return true
+	u.Path = u.Path[:idx] + "/clusters/" + clusterID
+	cfg.Host = u.String()
+	return cfg, nil
 }

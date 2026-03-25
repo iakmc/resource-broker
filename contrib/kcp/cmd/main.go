@@ -64,8 +64,7 @@ var (
 		"APIExportEndpointSlice name to watch for APIs to broker.",
 	)
 
-	fOverrideKcpHost = flag.String("kcp-host-override", "", "If set, overrides the host used to connect to kcp")
-	fOverrideKcpPort = flag.String("kcp-port-override", "", "If set, overrides the port used to connect to kcp")
+	fWorkspaceTreeRoot = flag.String("workspace-tree-root", "root:rb", "KCP workspace path under which staging workspaces are created")
 )
 
 func main() {
@@ -144,11 +143,9 @@ func main() {
 		MigrationCoordination: kcpConfig,
 		ComputeConfig:         computeConfig,
 
-		AcceptAPIName: *fAcceptAPI,
-		BrokerAPIName: *fBrokerAPI,
-
-		KcpHostOverride: *fOverrideKcpHost,
-		KcpPortOverride: *fOverrideKcpPort,
+		AcceptAPIName:     *fAcceptAPI,
+		BrokerAPIName:     *fBrokerAPI,
+		WorkspaceTreeRoot: *fWorkspaceTreeRoot,
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to setup broker")

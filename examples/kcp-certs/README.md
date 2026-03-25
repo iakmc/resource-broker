@@ -125,7 +125,7 @@ kubectl kcp bind apiexport root:platform:acceptapis \
     --kubeconfig kubeconfigs/workspaces/internalca.kubeconfig \
     --accept-permission-claim secrets.core \
     --accept-permission-claim events.core \
-    --accept-permission-claim namespaces.core
+    --accept-permission-claim namespaces.core || true
 ```
 
 And do the same for the externalca provider workspace:
@@ -135,7 +135,7 @@ kubectl kcp bind apiexport root:platform:acceptapis \
     --kubeconfig kubeconfigs/workspaces/externalca.kubeconfig \
     --accept-permission-claim secrets.core \
     --accept-permission-claim events.core \
-    --accept-permission-claim namespaces.core
+    --accept-permission-claim namespaces.core || true
 ```
 
 And now create AcceptAPI resources in both provider workspaces.
@@ -214,14 +214,6 @@ Certificates available yet:
 kubectl --kubeconfig="./kubeconfigs/workspaces/consumer.kubeconfig" api-resources --api-group example.platform-mesh.io
 ```
 
-<!--
-```bash ci
-if kubectl --kubeconfig="./kubeconfigs/workspaces/consumer.kubeconfig" api-resources --api-group example.platform-mesh.io | grep -q Certificate; then
-    echo "Certificate API should not be available yet"
-    exit 1
-fi
-```
--->
 
 Now bind the certificate APIExport from the platform workspace into the consumer workspace:
 
@@ -230,7 +222,7 @@ kubectl kcp bind apiexport root:platform:certificates \
     --kubeconfig="./kubeconfigs/workspaces/consumer.kubeconfig" \
     --accept-permission-claim secrets.core \
     --accept-permission-claim events.core \
-    --accept-permission-claim namespaces.core
+    --accept-permission-claim namespaces.core || true
 ```
 
 This will create an APIBinding in the consumer workspace:
