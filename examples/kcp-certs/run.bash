@@ -54,11 +54,12 @@ _setup() {
     log "Setting up platform kcp workspace"
     kcp::create_workspace "$kubeconfigs/kcp-admin.kubeconfig" "$ws_platform" "platform"
 
-    log "Installing migration CRDs into platform workspace"
+    log "Installing broker CRDs into platform workspace"
     kubectl::apply \
         "$ws_platform" \
         ./config/broker/crd/broker.platform-mesh.io_migrationconfigurations.yaml \
-        ./config/broker/crd/broker.platform-mesh.io_migrations.yaml
+        ./config/broker/crd/broker.platform-mesh.io_migrations.yaml \
+        ./config/broker/crd/broker.platform-mesh.io_stagingworkspaces.yaml
 
     log "Setting up AcceptAPI APIExport for providers"
     kcp::apiexport "$ws_platform" ./config/broker/crd/broker.platform-mesh.io_acceptapis.yaml \
@@ -84,6 +85,12 @@ _setup() {
 
     log "Setting up consumer kcp workspace"
     kcp::create_workspace "$kubeconfigs/kcp-admin.kubeconfig" "$ws_consumer" "consumer"
+
+    log "Bind Certificate APIExport in consumer workspace"
+    kcp::apibinding "$ws_consumer" "root:platform" certificates \
+        secrets "" '*' \
+        events "" '*' \
+        namespaces "" '*'
 }
 
 _cluster_id() {
@@ -133,6 +140,28 @@ _provider_setup_new() {
         "certificates" "Certificate" "example.platform-mesh.io" "v1alpha1" \
         "certificate" "service" "Secret" "status.relatedResources.secret.name"
 
+    log "Bind acceptapis APIExport in $name workspace"
+    kcp::apibinding "$ws_kubeconfig" "root:platform" acceptapis \
+        secrets "" 'get,list,watch'
+
+    log "Register AcceptAPI in $name workspace"
+    {
+        echo "apiVersion: broker.platform-mesh.io/v1alpha1"
+        echo "kind: AcceptAPI"
+        echo "metadata:"
+        echo "  name: certificates.example.platform-mesh.io"
+        echo "  annotations:"
+        echo "    broker.platform-mesh.io/kcp-apiexport-name: certificates"
+        echo "spec:"
+        echo "  gvr:"
+        echo "    group: example.platform-mesh.io"
+        echo "    version: v1alpha1"
+        echo "    resource: certificates"
+        echo "  filters:"
+        echo "    - key: fqdn"
+        echo "      suffix: $suffix"
+    } | kubectl::apply "$ws_kubeconfig" "-"
+
     log "Bind APIExport $name locally in $name workspace"
     kcp::apibinding "$ws_kubeconfig" "root:$name" certificates \
         secrets "" '*' \
@@ -141,7 +170,7 @@ _provider_setup_new() {
 
     # Grab the VW endpoint URL for later use
     local cluster_id="$(_cluster_id "$ws_kubeconfig" apiexportendpointslices/certificates)"
-    local endpoint_url="https://127.0.0.1:8443/services/apiexport/$cluster_id/certificates/clusters/$cluster_id"
+    local endpoint_url="https://127.0.0.1:8443/services/apiexport/$cluster_id/certificates"
 
     # Create a service account for the broker to use; this should get proper
     # RBAC in a prod setup
