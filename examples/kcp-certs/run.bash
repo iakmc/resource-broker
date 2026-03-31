@@ -170,7 +170,7 @@ _provider_setup_new() {
 
     # Grab the VW endpoint URL for later use
     local cluster_id="$(_cluster_id "$ws_kubeconfig" apiexportendpointslices/certificates)"
-    local endpoint_url="https://127.0.0.1:8443/services/apiexport/$cluster_id/certificates"
+    local endpoint_url="https://127.0.0.1:8443/services/apiexport/$cluster_id/certificates/clusters/$cluster_id"
 
     # Create a service account for the broker to use; this should get proper
     # RBAC in a prod setup
