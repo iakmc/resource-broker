@@ -15,12 +15,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package stagingworkspace implements a reconciler that manages per-consumer×provider
-// staging KCP workspaces. For each [brokerv1alpha1.StagingWorkspace] object it:
-//  1. Creates a KCP Workspace under the configured tree-root workspace.
-//  2. Creates an APIBinding in that workspace pointing to the provider's APIExport.
-//  3. Creates RBAC in that workspace so the broker user can access the bound resources.
-//  4. Registers the resulting cluster in the Output provider once both are ready.
+// Package stagingworkspace implements two reconcilers that together manage
+// per-consumer x provider staging kcp workspaces. For each
+// [brokerv1alpha1.StagingWorkspace] object:
+//
+// The staging-workspace reconciler:
+//  1. Creates a kcp Workspace under the configured tree-root workspace.
+//  2. Waits for it to be ready and sets Status.WorkspaceURL.
+//
+// The staging-apibinding reconciler (triggered once WorkspaceURL is set):
+//  3. Creates an APIBinding in that workspace pointing to the provider's APIExport.
+//  4. Creates RBAC in that workspace so the broker user can access the bound resources.
+//  5. Registers the resulting cluster in the Output provider and sets Phase=Ready.
 package stagingworkspace
 
 import (
@@ -49,7 +55,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 	"sigs.k8s.io/multicluster-runtime/providers/clusters"
 
 	brokerv1alpha1 "github.com/platform-mesh/resource-broker/api/broker/v1alpha1"
@@ -67,6 +75,17 @@ const (
 	// holds the cluster name used to register the staging cluster in the Output
 	// provider.
 	StagingClusterLabelKey = "broker.platform-mesh.io/staging-cluster-name"
+
+	// ResourceFinalizerPrefix is the prefix for per-resource finalizers added to
+	// StagingWorkspace objects. The staging-workspace reconciler deletes the SW
+	// once all such finalizers have been removed by the broker.
+	ResourceFinalizerPrefix = "broker.platform-mesh.io/resource-"
+
+	// ResourceTrackedAnnotation is set on a StagingWorkspace when the first
+	// resource is tracked. The staging-workspace reconciler uses it to
+	// distinguish a SW that was never used from one that has had all its
+	// resources removed and should be deleted.
+	ResourceTrackedAnnotation = "broker.platform-mesh.io/resource-tracked"
 )
 
 // Options configures the staging workspace reconciler.
@@ -162,18 +181,27 @@ func certCNFromRestConfig(cfg *rest.Config) (string, error) {
 	return cert.Subject.CommonName, nil
 }
 
-// SetupWithManager registers the reconciler with a controller-runtime manager.
+// SetupWithManager registers both controllers with a controller-runtime manager.
 // The manager must have the broker v1alpha1 scheme registered.
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.Client = mgr.GetClient()
-	return ctrl.NewControllerManagedBy(mgr).
+
+	if err := ctrl.NewControllerManagedBy(mgr).
 		Named("staging-workspace").
 		For(&brokerv1alpha1.StagingWorkspace{}).
-		Complete(r)
+		Complete(reconcile.Func(r.reconcileWorkspace)); err != nil {
+		return err
+	}
+
+	return ctrl.NewControllerManagedBy(mgr).
+		Named("staging-apibinding").
+		For(&brokerv1alpha1.StagingWorkspace{}).
+		Complete(reconcile.Func(r.reconcileAPIBinding))
 }
 
-// Reconcile is the main reconcile loop for StagingWorkspace objects.
-func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+// reconcileWorkspace manages the kcp Workspace lifecycle for a StagingWorkspace:
+// it creates the workspace, waits for it to be ready, and sets Status.WorkspaceURL.
+func (r *Reconciler) reconcileWorkspace(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := ctrllog.FromContext(ctx).WithValues("stagingWorkspace", req.NamespacedName)
 
 	sw := &brokerv1alpha1.StagingWorkspace{}
@@ -194,6 +222,27 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 	}
 
+	// If the SW was previously tracking resources (ResourceTrackedAnnotation is
+	// set) and all resource finalizers have since been removed, the broker is
+	// done with it — delete it so finalize() can clean up the kcp workspace.
+	if sw.Status.Phase == brokerv1alpha1.StagingWorkspacePhaseReady &&
+		sw.Annotations[ResourceTrackedAnnotation] == "true" {
+		hasResourceFinalizer := false
+		for _, f := range sw.Finalizers {
+			if strings.HasPrefix(f, ResourceFinalizerPrefix) {
+				hasResourceFinalizer = true
+				break
+			}
+		}
+		if !hasResourceFinalizer {
+			log.Info("No resource finalizers remain, deleting staging workspace", "stagingWorkspace", sw.Name)
+			if err := r.Delete(ctx, sw); err != nil && !apierrors.IsNotFound(err) {
+				return ctrl.Result{}, fmt.Errorf("failed to delete empty staging workspace: %w", err)
+			}
+			return ctrl.Result{}, nil
+		}
+	}
+
 	result, err := r.ensureWorkspace(ctx, sw)
 	if err != nil {
 		log.Error(err, "Failed to ensure staging workspace")
@@ -203,8 +252,37 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	return result, err
 }
 
-// ensureWorkspace drives the staging workspace through its lifecycle:
-// KCP Workspace creation → APIBinding creation → cluster registration.
+// reconcileAPIBinding manages the APIBinding lifecycle for a StagingWorkspace.
+// It only acts once Status.WorkspaceURL is set by reconcileWorkspace.
+func (r *Reconciler) reconcileAPIBinding(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	log := ctrllog.FromContext(ctx).WithValues("stagingWorkspace", req.NamespacedName)
+
+	sw := &brokerv1alpha1.StagingWorkspace{}
+	if err := r.Get(ctx, req.NamespacedName, sw); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, err
+	}
+
+	if sw.DeletionTimestamp != nil || sw.Status.WorkspaceURL == "" {
+		return ctrl.Result{}, nil
+	}
+	if sw.Status.Phase == brokerv1alpha1.StagingWorkspacePhaseReady {
+		return ctrl.Result{}, nil
+	}
+
+	result, err := r.ensureAPIBinding(ctx, sw)
+	if err != nil {
+		log.Error(err, "Failed to ensure APIBinding in staging workspace")
+		sw.Status.Phase = brokerv1alpha1.StagingWorkspacePhaseFailed
+		_ = r.Client.Status().Update(ctx, sw)
+	}
+	return result, err
+}
+
+// ensureWorkspace creates the kcp Workspace and waits for it to be ready.
+// Once ready, it writes Status.WorkspaceURL to signal the APIBinding reconciler.
 func (r *Reconciler) ensureWorkspace(ctx context.Context, sw *brokerv1alpha1.StagingWorkspace) (ctrl.Result, error) {
 	log := ctrllog.FromContext(ctx)
 
@@ -213,7 +291,7 @@ func (r *Reconciler) ensureWorkspace(ctx context.Context, sw *brokerv1alpha1.Sta
 		return ctrl.Result{}, fmt.Errorf("failed to create tree-root client: %w", err)
 	}
 
-	// Step 1: Ensure the KCP Workspace exists.
+	// Step 1: Ensure the kcp Workspace exists.
 	workspace := &kcptenancyv1alpha1.Workspace{}
 	err = treeRootClient.Get(ctx, types.NamespacedName{Name: sw.Name}, workspace)
 	if apierrors.IsNotFound(err) {
@@ -223,32 +301,24 @@ func (r *Reconciler) ensureWorkspace(ctx context.Context, sw *brokerv1alpha1.Sta
 			},
 		}
 		if err := treeRootClient.Create(ctx, workspace); err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to create KCP workspace %q: %w", sw.Name, err)
+			return ctrl.Result{}, fmt.Errorf("failed to create kcp workspace %q: %w", sw.Name, err)
 		}
-		log.Info("Created KCP workspace", "name", sw.Name)
+		log.Info("Created kcp workspace", "name", sw.Name)
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to get KCP workspace %q: %w", sw.Name, err)
+		return ctrl.Result{}, fmt.Errorf("failed to get kcp workspace %q: %w", sw.Name, err)
 	}
 
 	// Step 2: Wait for the workspace to be ready.
-	// If the workspace is terminating, treat it as not found and recreate it.
+	// If the workspace is terminating, wait for it to disappear. The next
+	// reconcile will hit IsNotFound and recreate it cleanly.
 	if !workspace.DeletionTimestamp.IsZero() {
-		log.Info("KCP workspace is terminating, recreating", "name", sw.Name)
-		workspace = &kcptenancyv1alpha1.Workspace{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: sw.Name,
-			},
-		}
-		if err := treeRootClient.Create(ctx, workspace); err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to recreate KCP workspace %q: %w", sw.Name, err)
-		}
-		log.Info("Recreated KCP workspace", "name", sw.Name)
+		log.Info("kcp workspace is terminating, waiting for deletion", "name", sw.Name)
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 	if workspace.Status.Phase != corev1alpha1.LogicalClusterPhaseReady {
-		log.Info("Waiting for KCP workspace to be ready",
+		log.Info("Waiting for kcp workspace to be ready",
 			"name", sw.Name,
 			"phase", workspace.Status.Phase,
 		)
@@ -257,17 +327,28 @@ func (r *Reconciler) ensureWorkspace(ctx context.Context, sw *brokerv1alpha1.Sta
 
 	workspaceURL := workspace.Spec.URL
 	if workspaceURL == "" {
-		log.Info("KCP workspace has no URL yet, waiting", "name", sw.Name)
+		log.Info("kcp workspace has no URL yet, waiting", "name", sw.Name)
 		return ctrl.Result{RequeueAfter: time.Second}, nil
 	}
 
-	// Step 3: Ensure the APIBinding exists in the staging workspace.
-	// Build the staging URL using the TreeRootConfig's base host so that we use
-	// the same server endpoint (port/scheme) as the kubeconfig. Workspace.Spec.URL
-	// may point to a different server (e.g. front-proxy) that requires different
-	// credentials. We extract the /clusters/<path> suffix from workspaceURL and
-	// substitute it into the TreeRootConfig host.
-	stagingHost, err := substituteClusterPath(r.opts.TreeRootConfig.Host, workspaceURL)
+	// Signal the APIBinding reconciler by setting WorkspaceURL.
+	if sw.Status.WorkspaceURL != workspaceURL {
+		sw.Status.WorkspaceURL = workspaceURL
+		if err := r.Client.Status().Update(ctx, sw); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	return ctrl.Result{}, nil
+}
+
+// ensureAPIBinding creates the APIBinding in the staging workspace, waits for
+// it to be bound, ensures broker RBAC, and registers the cluster in Output.
+func (r *Reconciler) ensureAPIBinding(ctx context.Context, sw *brokerv1alpha1.StagingWorkspace) (ctrl.Result, error) {
+	log := ctrllog.FromContext(ctx)
+
+	// Build a client pointing directly at the staging workspace.
+	stagingHost, err := substituteClusterPath(r.opts.TreeRootConfig.Host, sw.Status.WorkspaceURL)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to derive staging workspace host: %w", err)
 	}
@@ -279,6 +360,7 @@ func (r *Reconciler) ensureWorkspace(ctx context.Context, sw *brokerv1alpha1.Sta
 		return ctrl.Result{}, fmt.Errorf("failed to create staging workspace client: %w", err)
 	}
 
+	// Step 3: Ensure the APIBinding exists in the staging workspace.
 	binding := &kcpapisv1alpha2.APIBinding{}
 	err = stagingClient.Get(ctx, types.NamespacedName{Name: APIBindingName}, binding)
 	if apierrors.IsNotFound(err) {
@@ -325,10 +407,10 @@ func (r *Reconciler) ensureWorkspace(ctx context.Context, sw *brokerv1alpha1.Sta
 	}
 
 	// Step 4.5: Ensure the broker user has RBAC to access the bound resources.
-	// In KCP, resources introduced by an APIBinding require explicit RBAC even for
+	// In kcp, resources introduced by an APIBinding require explicit RBAC even for
 	// workspace admins when no maximalPermissionPolicy is set on the APIExport.
-	if result, err := r.ensureBrokerRBAC(ctx, stagingClient, binding, sw.Name); err != nil || result.RequeueAfter > 0 {
-		return result, err
+	if err := r.ensureBrokerRBAC(ctx, stagingClient, binding, sw.Name); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// Step 5: Register the staging cluster in the Output provider.
@@ -344,7 +426,7 @@ func (r *Reconciler) ensureWorkspace(ctx context.Context, sw *brokerv1alpha1.Sta
 		return ctrl.Result{}, fmt.Errorf("failed to create staging cluster: %w", err)
 	}
 
-	if err := r.opts.Output.Add(ctx, stagingClusterName, stagingCluster); err != nil {
+	if err := r.opts.Output.Add(ctx, multicluster.ClusterName(stagingClusterName), stagingCluster); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to add staging cluster to output: %w", err)
 	}
 	log.Info("Registered staging cluster in output provider",
@@ -352,8 +434,7 @@ func (r *Reconciler) ensureWorkspace(ctx context.Context, sw *brokerv1alpha1.Sta
 		"clusterName", stagingClusterName,
 	)
 
-	// Update status to Ready.
-	sw.Status.WorkspaceURL = workspaceURL
+	// Mark the StagingWorkspace as fully ready.
 	sw.Status.Phase = brokerv1alpha1.StagingWorkspacePhaseReady
 	if err := r.Client.Status().Update(ctx, sw); err != nil {
 		return ctrl.Result{}, err
@@ -369,7 +450,7 @@ func (r *Reconciler) finalize(ctx context.Context, sw *brokerv1alpha1.StagingWor
 
 	stagingClusterName := sw.Labels[StagingClusterLabelKey]
 	if stagingClusterName != "" {
-		r.opts.Output.Remove(stagingClusterName)
+		r.opts.Output.Remove(multicluster.ClusterName(stagingClusterName))
 		log.Info("Removed staging cluster from output provider", "clusterName", stagingClusterName)
 	}
 
@@ -468,7 +549,7 @@ func (r *Reconciler) ensureBrokerRBAC(
 	stagingClient client.Client,
 	binding *kcpapisv1alpha2.APIBinding,
 	workspaceName string,
-) (ctrl.Result, error) {
+) error {
 	log := ctrllog.FromContext(ctx)
 
 	const roleName = "broker-binding-access"
@@ -482,49 +563,35 @@ func (r *Reconciler) ensureBrokerRBAC(
 		})
 	}
 
-	role := &rbacv1.ClusterRole{}
-	if err := stagingClient.Get(ctx, types.NamespacedName{Name: roleName}, role); err != nil {
-		if !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, fmt.Errorf("failed to get broker ClusterRole in staging workspace: %w", err)
-		}
-		role = &rbacv1.ClusterRole{
-			ObjectMeta: metav1.ObjectMeta{Name: roleName},
-			Rules:      rules,
-		}
-		if err := stagingClient.Create(ctx, role); err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to create broker ClusterRole in staging workspace: %w", err)
-		}
-		log.Info("Created broker ClusterRole in staging workspace", "workspace", workspaceName)
-		return ctrl.Result{RequeueAfter: time.Second}, nil
+	role := &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: roleName}}
+	if _, err := controllerutil.CreateOrUpdate(ctx, stagingClient, role, func() error {
+		role.Rules = rules
+		return nil
+	}); err != nil {
+		return fmt.Errorf("failed to reconcile broker ClusterRole in staging workspace: %w", err)
 	}
+	log.Info("Reconciled broker ClusterRole in staging workspace", "workspace", workspaceName)
 
-	crb := &rbacv1.ClusterRoleBinding{}
-	if err := stagingClient.Get(ctx, types.NamespacedName{Name: roleName}, crb); err != nil {
-		if !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, fmt.Errorf("failed to get broker ClusterRoleBinding in staging workspace: %w", err)
+	crb := &rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: roleName}}
+	if _, err := controllerutil.CreateOrUpdate(ctx, stagingClient, crb, func() error {
+		crb.RoleRef = rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "ClusterRole",
+			Name:     roleName,
 		}
-		crb = &rbacv1.ClusterRoleBinding{
-			ObjectMeta: metav1.ObjectMeta{Name: roleName},
-			RoleRef: rbacv1.RoleRef{
-				APIGroup: "rbac.authorization.k8s.io",
-				Kind:     "ClusterRole",
-				Name:     roleName,
-			},
-			Subjects: []rbacv1.Subject{{
-				Kind:     "User",
-				APIGroup: "rbac.authorization.k8s.io",
-				Name:     r.brokerUser,
-			}},
-		}
-		if err := stagingClient.Create(ctx, crb); err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to create broker ClusterRoleBinding in staging workspace: %w", err)
-		}
-		log.Info("Created broker ClusterRoleBinding in staging workspace",
-			"workspace", workspaceName, "user", r.brokerUser)
-		return ctrl.Result{RequeueAfter: time.Second}, nil
+		crb.Subjects = []rbacv1.Subject{{
+			Kind:     "User",
+			APIGroup: "rbac.authorization.k8s.io",
+			Name:     r.brokerUser,
+		}}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("failed to reconcile broker ClusterRoleBinding in staging workspace: %w", err)
 	}
+	log.Info("Reconciled broker ClusterRoleBinding in staging workspace",
+		"workspace", workspaceName, "user", r.brokerUser)
 
-	return ctrl.Result{}, nil
+	return nil
 }
 
 // substituteClusterPath builds a workspace URL that uses the same base host
