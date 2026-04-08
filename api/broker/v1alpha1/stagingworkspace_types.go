@@ -25,7 +25,7 @@ type StagingWorkspaceSpec struct {
 	// +kubebuilder:validation:Required
 	ConsumerCluster string `json:"consumerCluster"`
 
-	// ProviderPath is the KCP workspace path of the provider
+	// ProviderPath is the kcp workspace path of the provider
 	// (value of the kcp.io/path annotation on AcceptAPI objects).
 	// +kubebuilder:validation:Required
 	ProviderPath string `json:"providerPath"`
@@ -35,7 +35,7 @@ type StagingWorkspaceSpec struct {
 	// +kubebuilder:validation:Required
 	APIExportName string `json:"apiExportName"`
 
-	// WorkspaceTreeRoot is the KCP workspace path under which the staging
+	// WorkspaceTreeRoot is the kcp workspace path under which the staging
 	// workspace will be created (e.g. "root:rb").
 	// +kubebuilder:validation:Required
 	WorkspaceTreeRoot string `json:"workspaceTreeRoot"`
@@ -55,7 +55,7 @@ const (
 
 // StagingWorkspaceStatus defines the observed state of StagingWorkspace.
 type StagingWorkspaceStatus struct {
-	// WorkspaceURL is the direct access URL of the created KCP staging
+	// WorkspaceURL is the direct access URL of the created kcp staging
 	// workspace. Set once the workspace reaches the Ready phase.
 	// +optional
 	WorkspaceURL string `json:"workspaceURL,omitempty"`
@@ -77,7 +77,7 @@ type StagingWorkspaceStatus struct {
 // +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
-// StagingWorkspace represents a per-consumer×provider staging KCP workspace.
+// StagingWorkspace represents a per-consumer x provider staging kcp workspace.
 // resource-broker creates one for each unique (consumer workspace, provider
 // workspace) pair and uses it to write consumer CRs that the provider's
 // api-syncagent can pick up via the APIExport virtual workspace.

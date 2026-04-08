@@ -28,6 +28,7 @@ import (
 	"strings"
 
 	"github.com/kcp-dev/multicluster-provider/apiexport"
+	kcpcore "github.com/kcp-dev/sdk/apis/core"
 	corev1alpha1 "github.com/kcp-dev/sdk/apis/core/v1alpha1"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -48,12 +49,6 @@ import (
 
 const (
 	kcpAcceptAPIFinalizer = "broker.platform-mesh.io/kcp-acceptapi-finalizer"
-
-	// AnnotationKCPPath is the annotation key used to store the provider
-	// workspace path on AcceptAPI objects in rb's in-memory registry.
-	// rb derives this value itself by reading the LogicalCluster singleton
-	// in the provider workspace — the provider does not need to set it.
-	AnnotationKCPPath = "kcp.io/path"
 
 	// AnnotationAPIExportName is the annotation providers set on their
 	// AcceptAPI objects to indicate which APIExport rb should bind in the
@@ -181,7 +176,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req mcreconcile.Request) (mc
 	if acceptAPI.Annotations == nil {
 		acceptAPI.Annotations = make(map[string]string)
 	}
-	acceptAPI.Annotations[AnnotationKCPPath] = providerPath
+	acceptAPI.Annotations[kcpcore.LogicalClusterPathAnnotationKey] = providerPath
 
 	log.Info("Registering AcceptAPI",
 		"providerPath", providerPath,
@@ -192,9 +187,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req mcreconcile.Request) (mc
 	return mctrl.Result{}, nil
 }
 
-// lookupProviderPath fetches the workspace path for the given KCP logical
+// lookupProviderPath fetches the workspace path for the given kcp logical
 // cluster ID by reading the LogicalCluster singleton resource directly in
-// that workspace. KCP sets kcp.io/path on the LogicalCluster to the
+// that workspace. kcp sets kcp.io/path on the LogicalCluster to the
 // human-readable workspace path (e.g. "root:internalca").
 func (r *Reconciler) lookupProviderPath(ctx context.Context, clusterID string) (string, error) {
 	cfg, err := clusterDirectConfig(r.opts.KcpConfig, clusterID)
@@ -208,13 +203,13 @@ func (r *Reconciler) lookupProviderPath(ctx context.Context, clusterID string) (
 	}
 
 	lc := &corev1alpha1.LogicalCluster{}
-	if err := cl.Get(ctx, types.NamespacedName{Name: "cluster"}, lc); err != nil {
+	if err := cl.Get(ctx, types.NamespacedName{Name: corev1alpha1.LogicalClusterName}, lc); err != nil {
 		return "", fmt.Errorf("failed to get LogicalCluster for cluster %q: %w", clusterID, err)
 	}
 
-	path := lc.Annotations[AnnotationKCPPath]
+	path := lc.Annotations[kcpcore.LogicalClusterPathAnnotationKey]
 	if path == "" {
-		return "", fmt.Errorf("LogicalCluster for cluster %q has no %s annotation", clusterID, AnnotationKCPPath)
+		return "", fmt.Errorf("LogicalCluster for cluster %q has no %s annotation", clusterID, kcpcore.LogicalClusterPathAnnotationKey)
 	}
 	return path, nil
 }
