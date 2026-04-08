@@ -30,6 +30,7 @@ import (
 	"github.com/kcp-dev/multicluster-provider/apiexport"
 	kcpapisv1alpha1 "github.com/kcp-dev/sdk/apis/apis/v1alpha1"
 	kcpapisv1alpha2 "github.com/kcp-dev/sdk/apis/apis/v1alpha2"
+	kcpcore "github.com/kcp-dev/sdk/apis/core"
 	"golang.org/x/sync/errgroup"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -67,14 +68,16 @@ const (
 	// that stores the provider cluster name used to look up AcceptAPIs.
 	stagingProviderClusterLabel = "broker.platform-mesh.io/provider-cluster"
 
+	// stagingAPIExportLabel is the label key on StagingWorkspace objects that
+	// stores the APIExport name bound in that workspace. Together with the
+	// consumer and provider labels it forms a unique (consumer, provider,
+	// apiexport) tuple, allowing one provider to serve multiple APIExports to
+	// the same consumer via separate staging workspaces.
+	stagingAPIExportLabel = "broker.platform-mesh.io/api-export"
+
 	// stagingNewClusterAnn is the annotation key on a StagingWorkspace used to
 	// record the migration-target staging cluster during a provider migration.
 	stagingNewClusterAnn = "broker.platform-mesh.io/new-staging-cluster"
-
-	// stagingResourceFinalizerPrefix is the prefix for per-resource finalizers
-	// added to StagingWorkspace CRs. Each active consumer resource adds one
-	// finalizer; when all are removed the StagingWorkspace CR is deleted.
-	stagingResourceFinalizerPrefix = "broker.platform-mesh.io/resource-"
 )
 
 // Options are the options for creating a Broker.
@@ -186,8 +189,8 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 		KcpConfig:     opts.KcpConfig,
 		APIExportName: opts.AcceptAPIName,
 		Scheme:        acceptAPIScheme,
-		SetAcceptAPI: func(gvr metav1.GroupVersionResource, clusterName string, acceptAPI brokerv1alpha1.AcceptAPI) {
-			clusterName = broker.ProviderPrefix + "#" + clusterName
+		SetAcceptAPI: func(gvr metav1.GroupVersionResource, cn multicluster.ClusterName, acceptAPI brokerv1alpha1.AcceptAPI) {
+			clusterName := broker.ProviderPrefix + "#" + string(cn)
 			b.opts.Log.Info("SetAcceptAPI", "gvr", gvr, "cluster", clusterName, "acceptAPI", acceptAPI.Name)
 			b.lock.Lock()
 			defer b.lock.Unlock()
@@ -199,8 +202,8 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 			}
 			b.apiAccepters[gvr][clusterName][acceptAPI.Name] = acceptAPI
 		},
-		DeleteAcceptAPI: func(gvr metav1.GroupVersionResource, clusterName string, acceptAPIName string) {
-			clusterName = broker.ProviderPrefix + "#" + clusterName
+		DeleteAcceptAPI: func(gvr metav1.GroupVersionResource, cn multicluster.ClusterName, acceptAPIName string) {
+			clusterName := broker.ProviderPrefix + "#" + string(cn)
 			b.opts.Log.Info("DeleteAcceptAPI", "gvr", gvr, "cluster", clusterName, "acceptAPI", acceptAPIName)
 			b.lock.Lock()
 			defer b.lock.Unlock()
@@ -408,7 +411,7 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 			if acceptAPIs, ok := b.apiAccepters[gvr][providerOrStagingName]; ok {
 				return slices.Collect(maps.Values(acceptAPIs)), nil
 			}
-			// Translate staging cluster name → provider cluster name.
+			// Translate staging cluster name -> provider cluster name.
 			if providerName, ok := b.stagingToProvider[providerOrStagingName]; ok {
 				if acceptAPIs, ok := b.apiAccepters[gvr][providerName]; ok {
 					return slices.Collect(maps.Values(acceptAPIs)), nil
@@ -441,7 +444,16 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 				sw := &swList.Items[i]
 				// Label stores "."-separated form; convert back to "#"-separated for apiAccepters lookup.
 				providerCluster := strings.ReplaceAll(sw.Labels[stagingProviderClusterLabel], ".", "#")
-				if _, ok := b.apiAccepters[gvr][providerCluster]; ok {
+				acceptAPIs, ok := b.apiAccepters[gvr][providerCluster]
+				if !ok {
+					continue
+				}
+				// Match the staging workspace against the APIExport it was created for.
+				swAPIExport := sw.Labels[stagingAPIExportLabel]
+				for _, a := range acceptAPIs {
+					if a.Annotations[kcpacceptapi.AnnotationAPIExportName] != swAPIExport {
+						continue
+					}
 					// Label stores bare name (no "provider#" prefix); restore it for multi-provider routing.
 					if rawName := sw.Labels[stagingworkspace.StagingClusterLabelKey]; rawName != "" {
 						return broker.ProviderPrefix + "#" + rawName, true, nil
@@ -453,7 +465,7 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 
 		EnsureStagingCluster: func(ctx context.Context, consumerCluster, providerClusterName string, gvr metav1.GroupVersionResource) (string, error) {
 			b.lock.RLock()
-			acceptAPIs := b.apiAccepters[gvr][providerClusterName]
+			acceptAPIs := maps.Clone(b.apiAccepters[gvr][providerClusterName])
 			b.lock.RUnlock()
 
 			if len(acceptAPIs) == 0 {
@@ -466,17 +478,17 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 				acceptAPI = a
 				break
 			}
-			providerPath := acceptAPI.Annotations[kcpacceptapi.AnnotationKCPPath]
+			providerPath := acceptAPI.Annotations[kcpcore.LogicalClusterPathAnnotationKey]
 			if providerPath == "" {
-				return "", fmt.Errorf("AcceptAPI for provider %q missing %s annotation", providerClusterName, kcpacceptapi.AnnotationKCPPath)
+				return "", fmt.Errorf("AcceptAPI for provider %q missing %s annotation", providerClusterName, kcpcore.LogicalClusterPathAnnotationKey)
 			}
 			apiExportName := acceptAPI.Annotations[kcpacceptapi.AnnotationAPIExportName]
 			if apiExportName == "" {
 				return "", fmt.Errorf("AcceptAPI for provider %q missing %s annotation", providerClusterName, kcpacceptapi.AnnotationAPIExportName)
 			}
 
-			swName := stagingWorkspaceName(consumerCluster, providerClusterName)
-			clusterName := stagingClusterName(consumerCluster, providerClusterName)
+			swName := stagingWorkspaceName(consumerCluster, providerClusterName, apiExportName)
+			clusterName := stagingClusterName(consumerCluster, providerClusterName, apiExportName)
 
 			sw := &brokerv1alpha1.StagingWorkspace{}
 			err := b.localClient.Get(ctx, types.NamespacedName{Name: swName}, sw)
@@ -487,6 +499,7 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 						Labels: map[string]string{
 							stagingConsumerClusterLabel:             labelSafeClusterName(consumerCluster),
 							stagingProviderClusterLabel:             labelSafeClusterName(providerClusterName),
+							stagingAPIExportLabel:                   apiExportName,
 							stagingworkspace.StagingClusterLabelKey: clusterNameToStagingLabel(clusterName),
 						},
 					},
@@ -522,7 +535,7 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 			return clusterName, nil
 		},
 
-		GetActiveMigration: func(ctx context.Context, consumerCluster string) (string, string, bool, error) {
+		GetActiveMigration: func(ctx context.Context, consumerCluster, currentProviderCluster string) (string, string, bool, error) {
 			swList := &brokerv1alpha1.StagingWorkspaceList{}
 			if err := b.localClient.List(ctx, swList, client.MatchingLabels{
 				stagingConsumerClusterLabel: labelSafeClusterName(consumerCluster),
@@ -531,8 +544,14 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 			}
 			for i := range swList.Items {
 				sw := &swList.Items[i]
-				if newCluster, ok := sw.Annotations[stagingNewClusterAnn]; ok && newCluster != "" {
-					oldCluster := broker.ProviderPrefix + "#" + sw.Labels[stagingworkspace.StagingClusterLabelKey]
+				newCluster, ok := sw.Annotations[stagingNewClusterAnn]
+				if !ok || newCluster == "" {
+					continue
+				}
+				oldCluster := broker.ProviderPrefix + "#" + sw.Labels[stagingworkspace.StagingClusterLabelKey]
+				// Only return the migration whose old or new cluster matches the
+				// current event to handle multiple concurrent migrations correctly.
+				if oldCluster == currentProviderCluster || newCluster == currentProviderCluster {
 					return oldCluster, newCluster, true, nil
 				}
 			}
@@ -586,9 +605,20 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 				return fmt.Errorf("staging workspace for cluster %q not found", stagingCluster)
 			}
 			sw := &swList.Items[0]
-			finalizer := stagingResourceFinalizerPrefix + genericreconciler.SanitizeClusterName(namespace+"/"+name)
+			finalizer := stagingworkspace.ResourceFinalizerPrefix + genericreconciler.SanitizeClusterName(namespace+"/"+name)
+			changed := false
 			if !containsFinalizer(sw.Finalizers, finalizer) {
 				sw.Finalizers = append(sw.Finalizers, finalizer)
+				changed = true
+			}
+			if sw.Annotations == nil {
+				sw.Annotations = make(map[string]string)
+			}
+			if sw.Annotations[stagingworkspace.ResourceTrackedAnnotation] != "true" {
+				sw.Annotations[stagingworkspace.ResourceTrackedAnnotation] = "true"
+				changed = true
+			}
+			if changed {
 				return b.localClient.Update(ctx, sw)
 			}
 			return nil
@@ -605,21 +635,11 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 				return nil // already gone
 			}
 			sw := &swList.Items[0]
-			finalizer := stagingResourceFinalizerPrefix + genericreconciler.SanitizeClusterName(namespace+"/"+name)
+			finalizer := stagingworkspace.ResourceFinalizerPrefix + genericreconciler.SanitizeClusterName(namespace+"/"+name)
 			sw.Finalizers = removeFinalizer(sw.Finalizers, finalizer)
-			if err := b.localClient.Update(ctx, sw); err != nil {
-				return err
-			}
-			// If no more resource finalizers remain, delete the StagingWorkspace.
-			for _, f := range sw.Finalizers {
-				if strings.HasPrefix(f, stagingResourceFinalizerPrefix) {
-					return nil
-				}
-			}
-			if err := b.localClient.Delete(ctx, sw); err != nil && !apierrors.IsNotFound(err) {
-				return fmt.Errorf("failed to delete empty staging workspace %q: %w", sw.Name, err)
-			}
-			return nil
+			// The staging-workspace reconciler watches StagingWorkspace updates and
+			// deletes the SW once all resource finalizers are gone.
+			return b.localClient.Update(ctx, sw)
 		},
 	}
 
@@ -643,8 +663,8 @@ func (b *Broker) Start(ctx context.Context) error {
 	return g.Wait()
 }
 
-// treeRootConfig derives a REST config pointing at the given KCP workspace
-// path by replacing the /clusters/<path> segment in the KCP host URL.
+// treeRootConfig derives a REST config pointing at the given kcp workspace
+// path by replacing the /clusters/<path> segment in the kcp host URL.
 func treeRootConfig(kcpConfig *rest.Config, workspaceTreeRoot string) (*rest.Config, error) {
 	cfg := rest.CopyConfig(kcpConfig)
 	u, err := url.Parse(cfg.Host)
@@ -660,21 +680,21 @@ func treeRootConfig(kcpConfig *rest.Config, workspaceTreeRoot string) (*rest.Con
 	return cfg, nil
 }
 
-// stagingWorkspaceName returns the deterministic KCP Workspace name for the
-// given (consumerCluster, providerCluster) pair.
-func stagingWorkspaceName(consumerCluster, providerCluster string) string {
+// stagingWorkspaceName returns the deterministic kcp Workspace name for the
+// given (consumerCluster, providerCluster, apiExportName) tuple.
+func stagingWorkspaceName(consumerCluster, providerCluster, apiExportName string) string {
 	consumer := strings.TrimPrefix(consumerCluster, broker.ConsumerPrefix+"#")
 	provider := strings.TrimPrefix(providerCluster, broker.ProviderPrefix+"#")
-	return "staging-" + genericreconciler.SanitizeClusterName(consumer) + "-" + genericreconciler.SanitizeClusterName(provider)
+	return "staging-" + genericreconciler.SanitizeClusterName(consumer) + "-" + genericreconciler.SanitizeClusterName(provider) + "-" + genericreconciler.SanitizeClusterName(apiExportName)
 }
 
 // stagingClusterName returns the multi-provider key used to register the
-// staging cluster for the given (consumerCluster, providerCluster) pair.
+// staging cluster for the given (consumerCluster, providerCluster, apiExportName) tuple.
 // Uses '.' instead of '#' so the name is also a valid Kubernetes label value.
-func stagingClusterName(consumerCluster, providerCluster string) string {
+func stagingClusterName(consumerCluster, providerCluster, apiExportName string) string {
 	consumer := strings.TrimPrefix(consumerCluster, broker.ConsumerPrefix+"#")
 	provider := strings.TrimPrefix(providerCluster, broker.ProviderPrefix+"#")
-	return broker.ProviderPrefix + "#staging-" + genericreconciler.SanitizeClusterName(consumer) + "-" + genericreconciler.SanitizeClusterName(provider)
+	return broker.ProviderPrefix + "#staging-" + genericreconciler.SanitizeClusterName(consumer) + "-" + genericreconciler.SanitizeClusterName(provider) + "-" + genericreconciler.SanitizeClusterName(apiExportName)
 }
 
 // labelSafeClusterName converts a cluster name to a Kubernetes-label-safe form

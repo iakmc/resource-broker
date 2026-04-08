@@ -84,9 +84,12 @@ type Options struct {
 	EnsureStagingCluster func(ctx context.Context, consumerCluster, providerClusterName string, gvr metav1.GroupVersionResource) (string, error)
 
 	// GetActiveMigration returns the old and new staging cluster names if a
-	// migration is in progress for the given consumer cluster.
+	// migration is in progress for the given (consumer, currentProvider) pair.
+	// currentProvider is the name of the staging cluster that triggered the event;
+	// implementations must use it to select the correct migration when multiple
+	// concurrent migrations exist for the same consumer.
 	// If nil, newProviderClusterAnn on the consumer object is used.
-	GetActiveMigration func(ctx context.Context, consumerCluster string) (oldCluster, newCluster string, found bool, err error)
+	GetActiveMigration func(ctx context.Context, consumerCluster, currentProviderCluster string) (oldCluster, newCluster string, found bool, err error)
 
 	// SetNewStagingCluster records the migration-target staging cluster for the
 	// given current staging cluster. If nil, newProviderClusterAnn is written
@@ -268,61 +271,10 @@ func (t *objectReconcileTask) Run(ctx context.Context) (mctrl.Result, error) {
 
 	if t.newProviderCluster != nil || !providerAccepts {
 		t.log.Info("Provider no longer accepts resource")
-		if err := t.newProvider(ctx, consumerObj); err != nil {
-			return mctrl.Result{}, err
+		result, done, err := t.runMigration(ctx, consumerObj)
+		if err != nil || done {
+			return result, err
 		}
-
-		status, found, err := t.getNewProviderStatus(ctx)
-		if err != nil {
-			return mctrl.Result{}, err
-		}
-		if found && !status.Continue() {
-			return mctrl.Result{}, nil
-		}
-
-		cont, state, err := t.migrate(ctx, consumerObj)
-		if err != nil {
-			t.log.Error(err, "Failed to check migration status")
-			return mctrl.Result{}, err
-		}
-		if !cont {
-			t.log.Info("Migration not yet ready to continue, waiting")
-			return mctrl.Result{RequeueAfter: time.Second}, nil
-		}
-
-		// Copy related resources from new provider when the cutover
-		// to the new provider can start.
-		switch state {
-		case brokerv1alpha1.MigrationStateInitialCompleted, brokerv1alpha1.MigrationStateCutoverInProgress, brokerv1alpha1.MigrationStateCutoverCompleted:
-			t.log.Info("Syncing related resources from new provider")
-			if err := t.syncRelatedResources(ctx, t.newProviderName, t.newProviderCluster); err != nil {
-				return mctrl.Result{}, err
-			}
-		}
-
-		if state != brokerv1alpha1.MigrationStateCutoverCompleted {
-			t.log.Info("Migration not yet completed, waiting")
-			return mctrl.Result{RequeueAfter: time.Second}, nil
-		}
-
-		t.log.Info("Deleting from old provider")
-		if err := t.deleteObj(ctx, t.providerCluster, t.providerNamespacedName()); err != nil {
-			return mctrl.Result{}, fmt.Errorf("failed to delete resource from old provider cluster %q: %w", t.providerName, err)
-		}
-
-		oldProviderName := t.providerName
-		t.providerName = t.newProviderName
-		t.providerCluster = t.newProviderCluster
-		t.newProviderName = ""
-		t.newProviderCluster = nil
-
-		if t.opts.ClearNewStagingCluster != nil {
-			if err := t.opts.ClearNewStagingCluster(ctx, oldProviderName); err != nil {
-				return mctrl.Result{}, fmt.Errorf("failed to clear migration state: %w", err)
-			}
-		}
-
-		return mctrl.Result{Requeue: true}, t.decorateInConsumer(ctx)
 	}
 
 	if err := t.syncResource(ctx, t.providerName, t.providerCluster); err != nil {
@@ -485,7 +437,7 @@ func (t *objectReconcileTask) determineClusters(ctx context.Context) (bool, erro
 	}
 
 	if t.opts.GetActiveMigration != nil {
-		oldCluster, newCluster, found, merr := t.opts.GetActiveMigration(ctx, t.consumerName)
+		oldCluster, newCluster, found, merr := t.opts.GetActiveMigration(ctx, t.consumerName, string(t.req.ClusterName))
 		if merr != nil {
 			return false, merr
 		}
@@ -809,6 +761,94 @@ func (t *objectReconcileTask) newProvider(ctx context.Context, consumerObj *unst
 	}
 
 	return nil
+}
+
+// runMigration drives the migration of a resource to a new provider.
+// It returns (result, done, err). When done is true the caller should return
+// immediately with the given result and error; when done is false the caller
+// may continue with the normal sync path (same-provider no-op case).
+func (t *objectReconcileTask) runMigration(ctx context.Context, consumerObj *unstructured.Unstructured) (mctrl.Result, bool, error) {
+	// Always call newProvider to sync the resource to the new provider and
+	// ensure the new provider cluster is set. This matches the original
+	// inline behavior which called newProvider on every reconcile loop.
+	if err := t.newProvider(ctx, consumerObj); err != nil {
+		return mctrl.Result{}, true, fmt.Errorf("failed to determine new provider: %w", err)
+	}
+
+	// Post-restart transient: stagingToProvider map is empty so
+	// providerAcceptsObj returns false, but getPossibleProvider picks the
+	// same provider again. Skip the migration entirely in that case.
+	if t.newProviderName == t.providerName {
+		t.log.Info("New provider equals current provider, skipping migration")
+		t.newProviderName = ""
+		t.newProviderCluster = nil
+		if t.opts.ClearNewStagingCluster != nil {
+			if err := t.opts.ClearNewStagingCluster(ctx, t.providerName); err != nil {
+				return mctrl.Result{}, true, fmt.Errorf("failed to clear new staging cluster: %w", err)
+			}
+		}
+		return mctrl.Result{}, false, nil
+	}
+
+	canContinue, migrationState, err := t.migrate(ctx, consumerObj)
+	if err != nil {
+		t.log.Error(err, "Failed to check migration status")
+		return mctrl.Result{}, true, err
+	}
+	if !canContinue {
+		t.log.Info("Migration not yet ready to continue, waiting")
+		return mctrl.Result{RequeueAfter: time.Second}, true, nil
+	}
+
+	// Copy related resources from new provider when cutover can start.
+	switch migrationState {
+	case brokerv1alpha1.MigrationStateInitialCompleted, brokerv1alpha1.MigrationStateCutoverInProgress, brokerv1alpha1.MigrationStateCutoverCompleted:
+		t.log.Info("Syncing related resources from new provider")
+		if err := t.syncRelatedResources(ctx, t.newProviderName, t.newProviderCluster); err != nil {
+			return mctrl.Result{}, true, err
+		}
+	}
+
+	if migrationState != brokerv1alpha1.MigrationStateCutoverCompleted {
+		// Migration still in progress: check new provider status before waiting.
+		status, found, err := t.getNewProviderStatus(ctx)
+		if err != nil {
+			return mctrl.Result{}, true, err
+		}
+		if found && !status.Continue() {
+			t.log.Info("New provider status indicates to not continue")
+			return mctrl.Result{}, true, nil
+		}
+		t.log.Info("Migration not yet completed, waiting")
+		return mctrl.Result{RequeueAfter: time.Second}, true, nil
+	}
+
+	// Cutover completed: clean up the old provider and swap state.
+	t.log.Info("Migration cutover completed, deleting from old provider", "provider", t.providerName)
+	if err := t.deleteObj(ctx, t.providerCluster, t.providerNamespacedName()); err != nil {
+		return mctrl.Result{}, true, fmt.Errorf("failed to delete resource from old provider cluster %q: %w", t.providerName, err)
+	}
+
+	if t.opts.UntrackResourceFromStagingWorkspace != nil {
+		nn := t.consumerNamespacedName()
+		if err := t.opts.UntrackResourceFromStagingWorkspace(ctx, t.providerName, nn.Namespace, nn.Name); err != nil {
+			return mctrl.Result{}, true, fmt.Errorf("failed to untrack resource from old staging workspace %q: %w", t.providerName, err)
+		}
+	}
+
+	oldProviderName := t.providerName
+	t.providerName = t.newProviderName
+	t.providerCluster = t.newProviderCluster
+	t.newProviderName = ""
+	t.newProviderCluster = nil
+
+	if t.opts.ClearNewStagingCluster != nil {
+		if err := t.opts.ClearNewStagingCluster(ctx, oldProviderName); err != nil {
+			return mctrl.Result{}, true, fmt.Errorf("failed to clear new staging cluster: %w", err)
+		}
+	}
+
+	return mctrl.Result{Requeue: true}, true, t.decorateInConsumer(ctx)
 }
 
 // migrate handles migration of the resource from one provider to another.

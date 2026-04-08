@@ -25,7 +25,7 @@ spec:
     schema:
       openAPIV3Schema:
         description: |-
-          StagingWorkspace represents a per-consumer×provider staging KCP workspace.
+          StagingWorkspace represents a per-consumer x provider staging kcp workspace.
           resource-broker creates one for each unique (consumer workspace, provider
           workspace) pair and uses it to write consumer CRs that the provider's
           api-syncagent can pick up via the APIExport virtual workspace.
@@ -61,12 +61,12 @@ spec:
                 type: string
               providerPath:
                 description: |-
-                  ProviderPath is the KCP workspace path of the provider
+                  ProviderPath is the kcp workspace path of the provider
                   (value of the kcp.io/path annotation on AcceptAPI objects).
                 type: string
               workspaceTreeRoot:
                 description: |-
-                  WorkspaceTreeRoot is the KCP workspace path under which the staging
+                  WorkspaceTreeRoot is the kcp workspace path under which the staging
                   workspace will be created (e.g. "root:rb").
                 type: string
             required:
@@ -143,7 +143,7 @@ spec:
                 type: string
               workspaceURL:
                 description: |-
-                  WorkspaceURL is the direct access URL of the created KCP staging
+                  WorkspaceURL is the direct access URL of the created kcp staging
                   workspace. Set once the workspace reaches the Ready phase.
                 type: string
             type: object

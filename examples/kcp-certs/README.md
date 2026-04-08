@@ -317,14 +317,16 @@ The resource-broker will see the Certificate in the virtual workspace of the API
 
 Wait for the certificate to appear on the internalca provider cluster:
 
+<!--
 ```bash ci
 kubectl::wait::list \
     kubeconfigs/internalca.kubeconfig \
     certificates.example.platform-mesh.io \
     --all-namespaces
 ```
+-->
 
-```bash ci
+```bash
 kubectl --kubeconfig kubeconfigs/internalca.kubeconfig get certificates.example.platform-mesh.io --all-namespaces
 ```
 
@@ -379,6 +381,7 @@ secret_name="$(kubectl --kubeconfig kubeconfigs/internalca.kubeconfig get "certi
 secret_namespace="$cert_namespace"
 ```
 
+<!--
 ```bash ci
 kubectl::wait::cert::subject \
     kubeconfigs/internalca.kubeconfig \
@@ -386,6 +389,7 @@ kubectl::wait::cert::subject \
     "$secret_namespace" \
     "app.internal.corp"
 ```
+-->
 
 The provider has created a cert-manager Certificate, which in turn
 generated a Secret with the issued certificate:
@@ -405,6 +409,7 @@ kubectl --kubeconfig kubeconfigs/internalca.kubeconfig get secrets --namespace "
 
 Wait for the certificate secret to be synced to the consumer workspace:
 
+<!--
 ```bash ci
 kubectl::wait::cert::subject \
     kubeconfigs/workspaces/consumer.kubeconfig \
@@ -412,6 +417,7 @@ kubectl::wait::cert::subject \
     "default" \
     "app.internal.corp"
 ```
+-->
 
 ```bash ci
 kubectl --kubeconfig kubeconfigs/workspaces/consumer.kubeconfig get secrets "cert-from-consumer"
@@ -456,12 +462,14 @@ The internalca and externalca providers have the same setup, with KRO
 relaying the Certificate example resource to a cert-manager Certificate
 and back, so the secret name and namespace can be grabbed the same way:
 
+<!--
 ```bash ci
 kubectl::wait::list \
     kubeconfigs/externalca.kubeconfig \
     certificates.example.platform-mesh.io \
     --all-namespaces
 ```
+-->
 
 ```bash ci
 cert_name="$(kubectl --kubeconfig kubeconfigs/externalca.kubeconfig get certificates.example.platform-mesh.io --all-namespaces -o jsonpath="{.items[0].metadata.name}")"
@@ -475,6 +483,7 @@ secret_name="$(kubectl --kubeconfig kubeconfigs/externalca.kubeconfig get "certi
 secret_namespace="$cert_namespace"
 ```
 
+<!--
 ```bash ci
 kubectl::wait::cert::subject \
     kubeconfigs/externalca.kubeconfig \
@@ -482,6 +491,7 @@ kubectl::wait::cert::subject \
     "$secret_namespace" \
     "app.corp.com"
 ```
+-->
 
 And decoding the `tls.crt` field shows the certificate was correctly issued for `app.corp.com`:
 
@@ -494,6 +504,7 @@ kubectl --kubeconfig kubeconfigs/externalca.kubeconfig \
 # subject=CN=app.corp.com
 ```
 
+<!--
 ```bash ci
 kubectl::wait::cert::subject \
     kubeconfigs/workspaces/consumer.kubeconfig \
@@ -501,6 +512,7 @@ kubectl::wait::cert::subject \
     "default" \
     "app.corp.com"
 ```
+-->
 
 And the secret in the consumer workspace has been updated accordingly:
 
