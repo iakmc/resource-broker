@@ -37,6 +37,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	kcpapisv1alpha2 "github.com/kcp-dev/sdk/apis/apis/v1alpha2"
@@ -126,6 +127,14 @@ type Reconciler struct {
 	// brokerUser is the CN of the certificate used by the broker to authenticate
 	// against KCP. It is granted access to bound resources in each staging workspace.
 	brokerUser string
+
+	// treeRootClient is a cached client for the tree-root workspace (constant config).
+	treeRootClient client.Client
+
+	// clientCacheMu guards clientCache.
+	clientCacheMu sync.Mutex
+	// clientCache caches per-host clients (staging and provider workspaces).
+	clientCache map[string]client.Client
 }
 
 // New creates a new staging workspace reconciler.
@@ -150,10 +159,17 @@ func New(opts Options) (*Reconciler, error) {
 		return nil, fmt.Errorf("unable to add rbac v1 to scheme: %w", err)
 	}
 
+	treeRootClient, err := client.New(opts.TreeRootConfig, client.Options{Scheme: treeRootScheme})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create tree-root client: %w", err)
+	}
+
 	return &Reconciler{
 		opts:           opts,
 		treeRootScheme: treeRootScheme,
 		brokerUser:     brokerUser,
+		treeRootClient: treeRootClient,
+		clientCache:    make(map[string]client.Client),
 	}, nil
 }
 
@@ -269,7 +285,17 @@ func (r *Reconciler) reconcileAPIBinding(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, nil
 	}
 	if sw.Status.Phase == brokerv1alpha1.StagingWorkspacePhaseReady {
-		return ctrl.Result{}, nil
+		// After a broker restart the in-memory Output provider is empty even
+		// though the StagingWorkspace is already Ready. Re-register the cluster
+		// if it is missing so that the broker can route traffic again.
+		stagingClusterName := sw.Labels[StagingClusterLabelKey]
+		if stagingClusterName != "" {
+			if _, err := r.opts.Output.Get(ctx, multicluster.ClusterName(stagingClusterName)); err == nil {
+				return ctrl.Result{}, nil
+			}
+		} else {
+			return ctrl.Result{}, nil
+		}
 	}
 
 	result, err := r.ensureAPIBinding(ctx, sw)
@@ -286,28 +312,22 @@ func (r *Reconciler) reconcileAPIBinding(ctx context.Context, req ctrl.Request) 
 func (r *Reconciler) ensureWorkspace(ctx context.Context, sw *brokerv1alpha1.StagingWorkspace) (ctrl.Result, error) {
 	log := ctrllog.FromContext(ctx)
 
-	treeRootClient, err := client.New(r.opts.TreeRootConfig, client.Options{Scheme: r.treeRootScheme})
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to create tree-root client: %w", err)
-	}
-
 	// Step 1: Ensure the kcp Workspace exists.
 	workspace := &kcptenancyv1alpha1.Workspace{}
-	err = treeRootClient.Get(ctx, types.NamespacedName{Name: sw.Name}, workspace)
-	if apierrors.IsNotFound(err) {
+	if err := r.treeRootClient.Get(ctx, types.NamespacedName{Name: sw.Name}, workspace); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, fmt.Errorf("failed to get kcp workspace %q: %w", sw.Name, err)
+		}
 		workspace = &kcptenancyv1alpha1.Workspace{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: sw.Name,
 			},
 		}
-		if err := treeRootClient.Create(ctx, workspace); err != nil {
+		if err := r.treeRootClient.Create(ctx, workspace); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to create kcp workspace %q: %w", sw.Name, err)
 		}
 		log.Info("Created kcp workspace", "name", sw.Name)
 		return ctrl.Result{RequeueAfter: time.Second}, nil
-	}
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to get kcp workspace %q: %w", sw.Name, err)
 	}
 
 	// Step 2: Wait for the workspace to be ready.
@@ -352,10 +372,7 @@ func (r *Reconciler) ensureAPIBinding(ctx context.Context, sw *brokerv1alpha1.St
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to derive staging workspace host: %w", err)
 	}
-	stagingConfig := rest.CopyConfig(r.opts.TreeRootConfig)
-	stagingConfig.Host = stagingHost
-
-	stagingClient, err := client.New(stagingConfig, client.Options{Scheme: r.treeRootScheme})
+	stagingClient, err := r.cachedClient(stagingHost)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to create staging workspace client: %w", err)
 	}
@@ -419,20 +436,26 @@ func (r *Reconciler) ensureAPIBinding(ctx context.Context, sw *brokerv1alpha1.St
 		return ctrl.Result{}, fmt.Errorf("StagingWorkspace %q is missing label %q", sw.Name, StagingClusterLabelKey)
 	}
 
-	stagingCluster, err := cluster.New(stagingConfig, func(o *cluster.Options) {
-		o.Scheme = r.opts.Scheme
-	})
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to create staging cluster: %w", err)
+	// Only create and register a new cluster.Cluster if this workspace is not
+	// already known to the output provider — cluster.New starts informers and
+	// is expensive.
+	if _, err := r.opts.Output.Get(ctx, multicluster.ClusterName(stagingClusterName)); err != nil {
+		stagingCfg := rest.CopyConfig(r.opts.TreeRootConfig)
+		stagingCfg.Host = stagingHost
+		stagingCluster, err := cluster.New(stagingCfg, func(o *cluster.Options) {
+			o.Scheme = r.opts.Scheme
+		})
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to create staging cluster: %w", err)
+		}
+		if err := r.opts.Output.Add(ctx, multicluster.ClusterName(stagingClusterName), stagingCluster); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to add staging cluster to output: %w", err)
+		}
+		log.Info("Registered staging cluster in output provider",
+			"workspace", sw.Name,
+			"clusterName", stagingClusterName,
+		)
 	}
-
-	if err := r.opts.Output.Add(ctx, multicluster.ClusterName(stagingClusterName), stagingCluster); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to add staging cluster to output: %w", err)
-	}
-	log.Info("Registered staging cluster in output provider",
-		"workspace", sw.Name,
-		"clusterName", stagingClusterName,
-	)
 
 	// Mark the StagingWorkspace as fully ready.
 	sw.Status.Phase = brokerv1alpha1.StagingWorkspacePhaseReady
@@ -455,18 +478,13 @@ func (r *Reconciler) finalize(ctx context.Context, sw *brokerv1alpha1.StagingWor
 	}
 
 	// Delete the KCP workspace (ignore NotFound in case it was already deleted).
-	treeRootClient, err := client.New(r.opts.TreeRootConfig, client.Options{Scheme: r.treeRootScheme})
-	if err != nil {
-		return fmt.Errorf("failed to create tree-root client during finalization: %w", err)
-	}
-
 	workspace := &kcptenancyv1alpha1.Workspace{}
-	if err := treeRootClient.Get(ctx, types.NamespacedName{Name: sw.Name}, workspace); err != nil {
+	if err := r.treeRootClient.Get(ctx, types.NamespacedName{Name: sw.Name}, workspace); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return fmt.Errorf("failed to get KCP workspace during finalization: %w", err)
 		}
 	} else if workspace.DeletionTimestamp.IsZero() {
-		if err := treeRootClient.Delete(ctx, workspace); err != nil && !apierrors.IsNotFound(err) {
+		if err := r.treeRootClient.Delete(ctx, workspace); err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete KCP workspace: %w", err)
 		}
 		log.Info("Deleted KCP workspace", "name", sw.Name)
@@ -493,10 +511,7 @@ func (r *Reconciler) providerPermissionClaims(
 	if err != nil {
 		return nil, fmt.Errorf("failed to derive provider host for %q: %w", providerPath, err)
 	}
-	providerConfig := rest.CopyConfig(r.opts.TreeRootConfig)
-	providerConfig.Host = providerHost
-
-	providerClient, err := client.New(providerConfig, client.Options{Scheme: r.treeRootScheme})
+	providerClient, err := r.cachedClient(providerHost)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create provider client: %w", err)
 	}
@@ -592,6 +607,24 @@ func (r *Reconciler) ensureBrokerRBAC(
 		"workspace", workspaceName, "user", r.brokerUser)
 
 	return nil
+}
+
+// cachedClient returns a cached client for the given host, creating one if needed.
+// The config's credentials are taken from TreeRootConfig; only the Host differs.
+func (r *Reconciler) cachedClient(host string) (client.Client, error) {
+	r.clientCacheMu.Lock()
+	defer r.clientCacheMu.Unlock()
+	if cl, ok := r.clientCache[host]; ok {
+		return cl, nil
+	}
+	cfg := rest.CopyConfig(r.opts.TreeRootConfig)
+	cfg.Host = host
+	cl, err := client.New(cfg, client.Options{Scheme: r.treeRootScheme})
+	if err != nil {
+		return nil, err
+	}
+	r.clientCache[host] = cl
+	return cl, nil
 }
 
 // substituteClusterPath builds a workspace URL that uses the same base host

@@ -376,6 +376,32 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 		return nil, fmt.Errorf("failed to setup staging workspace reconciler: %w", err)
 	}
 
+	// Pre-populate stagingToProvider from existing StagingWorkspace objects so
+	// the map survives operator restarts (EnsureStagingCluster is the only other
+	// writer, so the map is empty until each workspace is re-encountered).
+	if err := generalMgr.GetLocalManager().Add(manager.RunnableFunc(func(ctx context.Context) error {
+		swList := &brokerv1alpha1.StagingWorkspaceList{}
+		if err := b.localClient.List(ctx, swList); err != nil {
+			return fmt.Errorf("failed to list StagingWorkspaces on startup: %w", err)
+		}
+		b.lock.Lock()
+		defer b.lock.Unlock()
+		for i := range swList.Items {
+			sw := &swList.Items[i]
+			stagingLabel := sw.Labels[stagingworkspace.StagingClusterLabelKey]
+			providerLabel := sw.Labels[stagingProviderClusterLabel]
+			if stagingLabel == "" || providerLabel == "" {
+				continue
+			}
+			clusterName := broker.ProviderPrefix + "#" + stagingLabel
+			providerClusterName := strings.ReplaceAll(providerLabel, ".", "#")
+			b.stagingToProvider[clusterName] = providerClusterName
+		}
+		return nil
+	})); err != nil {
+		return nil, fmt.Errorf("failed to add staging-to-provider startup runnable: %w", err)
+	}
+
 	// Generic Sync Controllers
 
 	genericOpts := genericreconciler.Options{
