@@ -386,8 +386,7 @@ func (r *Reconciler) ensureAPIBinding(ctx context.Context, sw *brokerv1alpha1.St
 		// to create namespaces, secrets, and events in the staging workspace.
 		permClaims, err := r.providerPermissionClaims(ctx, sw.Spec.ProviderPath, sw.Spec.APIExportName)
 		if err != nil {
-			log.Error(err, "Failed to fetch provider APIExport permission claims; creating APIBinding without claims")
-			permClaims = nil
+			return ctrl.Result{}, fmt.Errorf("failed to fetch provider APIExport permission claims: %w", err)
 		}
 		binding = &kcpapisv1alpha2.APIBinding{
 			ObjectMeta: metav1.ObjectMeta{

@@ -629,6 +629,25 @@ func (t *objectReconcileTask) deleteObjs(ctx context.Context) error {
 		}
 	}
 
+	// If the object is deleted mid-migration, clean up the copy that was
+	// already created in the new provider's staging cluster.
+	if t.newProviderCluster != nil {
+		if err := t.deleteObj(ctx, t.newProviderCluster, t.providerNamespacedName()); err != nil {
+			return fmt.Errorf("failed to delete resource from new provider cluster %q: %w", t.newProviderName, err)
+		}
+		if t.opts.UntrackResourceFromStagingWorkspace != nil {
+			nn := t.consumerNamespacedName()
+			if err := t.opts.UntrackResourceFromStagingWorkspace(ctx, t.newProviderName, nn.Namespace, nn.Name); err != nil {
+				return fmt.Errorf("failed to untrack resource from new staging workspace: %w", err)
+			}
+		}
+		if t.opts.ClearNewStagingCluster != nil {
+			if err := t.opts.ClearNewStagingCluster(ctx, t.providerName); err != nil {
+				return fmt.Errorf("failed to clear new staging cluster marker: %w", err)
+			}
+		}
+	}
+
 	if t.consumerCluster != nil {
 		if err := t.deleteObj(ctx, t.consumerCluster, t.consumerNamespacedName()); err != nil {
 			return fmt.Errorf("failed to delete resource from consumer cluster %q: %w", t.consumerName, err)

@@ -121,21 +121,17 @@ provider clusters to their respective kcp workspaces.
 Now bind the AcceptAPI from the platform workspace into the internalca provider workspace:
 
 ```bash ci
-kubectl kcp bind apiexport root:platform:acceptapis \
-    --kubeconfig kubeconfigs/workspaces/internalca.kubeconfig \
-    --accept-permission-claim secrets.core \
-    --accept-permission-claim events.core \
-    --accept-permission-claim namespaces.core || true
+kcp::apibinding kubeconfigs/workspaces/internalca.kubeconfig \
+    "root:platform" acceptapis \
+    secrets "" 'get,list,watch'
 ```
 
 And do the same for the externalca provider workspace:
 
 ```bash ci
-kubectl kcp bind apiexport root:platform:acceptapis \
-    --kubeconfig kubeconfigs/workspaces/externalca.kubeconfig \
-    --accept-permission-claim secrets.core \
-    --accept-permission-claim events.core \
-    --accept-permission-claim namespaces.core || true
+kcp::apibinding kubeconfigs/workspaces/externalca.kubeconfig \
+    "root:platform" acceptapis \
+    secrets "" 'get,list,watch'
 ```
 
 And now create AcceptAPI resources in both provider workspaces.
@@ -218,11 +214,11 @@ kubectl --kubeconfig="./kubeconfigs/workspaces/consumer.kubeconfig" api-resource
 Now bind the certificate APIExport from the platform workspace into the consumer workspace:
 
 ```bash ci
-kubectl kcp bind apiexport root:platform:certificates \
-    --kubeconfig="./kubeconfigs/workspaces/consumer.kubeconfig" \
-    --accept-permission-claim secrets.core \
-    --accept-permission-claim events.core \
-    --accept-permission-claim namespaces.core || true
+kcp::apibinding kubeconfigs/workspaces/consumer.kubeconfig \
+    "root:platform" certificates \
+    secrets "" '*' \
+    events "" '*' \
+    namespaces "" '*'
 ```
 
 This will create an APIBinding in the consumer workspace:
@@ -420,6 +416,8 @@ kubectl::wait::cert::subject \
 -->
 
 ```bash ci
+kubectl --kubeconfig kubeconfigs/workspaces/consumer.kubeconfig \
+    wait secret/cert-from-consumer --for=create --timeout=5m
 kubectl --kubeconfig kubeconfigs/workspaces/consumer.kubeconfig get secrets "cert-from-consumer"
 ```
 

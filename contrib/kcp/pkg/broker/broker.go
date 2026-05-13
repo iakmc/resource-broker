@@ -464,8 +464,12 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 			}); err != nil {
 				return "", false, err
 			}
+
+			// Collect candidate staging cluster names under the lock, then verify
+			// each is registered in multiProvider without holding the lock (to avoid
+			// a potential deadlock if multiProvider.Get acquires any lock we hold).
+			var candidates []string
 			b.lock.RLock()
-			defer b.lock.RUnlock()
 			for i := range swList.Items {
 				sw := &swList.Items[i]
 				// Label stores "."-separated form; convert back to "#"-separated for apiAccepters lookup.
@@ -482,8 +486,21 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 					}
 					// Label stores bare name (no "provider#" prefix); restore it for multi-provider routing.
 					if rawName := sw.Labels[stagingworkspace.StagingClusterLabelKey]; rawName != "" {
-						return broker.ProviderPrefix + "#" + rawName, true, nil
+						candidates = append(candidates, rawName)
 					}
+				}
+			}
+			b.lock.RUnlock()
+
+			// Only return a staging cluster that is already registered and reachable.
+			// Skipping unregistered clusters prevents GetProviderCluster from failing
+			// with a hard error (which causes exponential backoff); the caller will
+			// fall through to EnsureStagingCluster which returns ErrRequeueAfter
+			// (fixed 5-second requeue) instead.
+			for _, rawName := range candidates {
+				clusterName := broker.ProviderPrefix + "#" + rawName
+				if _, err := b.multiProvider.Get(ctx, multicluster.ClusterName(clusterName)); err == nil {
+					return clusterName, true, nil
 				}
 			}
 			return "", false, nil
@@ -519,6 +536,34 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 			sw := &brokerv1alpha1.StagingWorkspace{}
 			err := b.localClient.Get(ctx, types.NamespacedName{Name: swName}, sw)
 			if apierrors.IsNotFound(err) {
+				// Before creating the new staging workspace, record the pending
+				// migration on every existing staging workspace for this consumer.
+				// This ensures GetActiveMigration can find the migration state even
+				// if SetNewStagingCluster is never called (e.g. the object is deleted
+				// while EnsureStagingCluster is still returning ErrRequeueAfter).
+				// Note: clusterName already includes the "provider#" prefix.
+				newClusterFullName := clusterName
+				existingList := &brokerv1alpha1.StagingWorkspaceList{}
+				if lerr := b.localClient.List(ctx, existingList, client.MatchingLabels{
+					stagingConsumerClusterLabel: labelSafeClusterName(consumerCluster),
+				}); lerr == nil {
+					for i := range existingList.Items {
+						existing := &existingList.Items[i]
+						if existing.Name == swName {
+							continue // new SW shouldn't exist yet, but be safe
+						}
+						if existing.Annotations[stagingNewClusterAnn] == newClusterFullName {
+							continue // already annotated
+						}
+						if existing.Annotations == nil {
+							existing.Annotations = make(map[string]string)
+						}
+						existing.Annotations[stagingNewClusterAnn] = newClusterFullName
+						// Best-effort: ignore errors so we still proceed to create the new SW.
+						_ = b.localClient.Update(ctx, existing)
+					}
+				}
+
 				sw = &brokerv1alpha1.StagingWorkspace{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: swName,
