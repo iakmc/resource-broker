@@ -151,8 +151,8 @@ apiVersion: broker.platform-mesh.io/v1alpha1
 kind: AcceptAPI
 metadata:
   annotations:
-    broker.platform-mesh.io/secret-name: kubeconfig-internalca
-  name: acceptapis.broker.platform-mesh.io
+    broker.platform-mesh.io/kcp-apiexport-name: certificates
+  name: certificates.example.platform-mesh.io
 spec:
   filters:
   - key: fqdn
@@ -164,13 +164,9 @@ spec:
 EOF
 ```
 
-Currently providers bind their own APIExport to get a virtual workspace
-and build a kubeconfig for the resource-broker to use. This kubeconfig
-is stored in a secret in their workspaces, which in turn is made
-accessible with a permission claim on the AcceptAPI binding.
-
-The annotation `broker.platform-mesh.io/secret-name` tells the
-resource-broker which secret to read the kubeconfig from.
+The annotation `broker.platform-mesh.io/kcp-apiexport-name` tells the
+resource-broker which APIExport on the provider workspace to use for
+routing.
 
 Now create the AcceptAPI for the externalca provider, which will
 accept Certificate resources with `spec.fqdn` ending with `corp.com`:
@@ -181,8 +177,8 @@ apiVersion: broker.platform-mesh.io/v1alpha1
 kind: AcceptAPI
 metadata:
   annotations:
-    broker.platform-mesh.io/secret-name: kubeconfig-externalca
-  name: acceptapis.broker.platform-mesh.io
+    broker.platform-mesh.io/kcp-apiexport-name: certificates
+  name: certificates.example.platform-mesh.io
 spec:
   filters:
   - key: fqdn

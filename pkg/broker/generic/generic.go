@@ -805,6 +805,17 @@ func (t *objectReconcileTask) runMigration(ctx context.Context, consumerObj *uns
 			if err := t.opts.ClearNewStagingCluster(ctx, t.providerName); err != nil {
 				return mctrl.Result{}, true, fmt.Errorf("failed to clear new staging cluster: %w", err)
 			}
+		} else {
+			// Non-staging path: clear the stale annotation directly on the
+			// consumer object so the next reconcile starts fresh.
+			anns := consumerObj.GetAnnotations()
+			if _, ok := anns[newProviderClusterAnn]; ok {
+				delete(anns, newProviderClusterAnn)
+				consumerObj.SetAnnotations(anns)
+				if err := t.consumerCluster.GetClient().Update(ctx, consumerObj); err != nil {
+					return mctrl.Result{}, true, fmt.Errorf("failed to clear stale new-provider annotation: %w", err)
+				}
+			}
 		}
 		return mctrl.Result{}, false, nil
 	}
