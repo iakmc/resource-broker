@@ -50,6 +50,10 @@ import (
 	"github.com/platform-mesh/resource-broker/pkg/sync"
 )
 
+// ErrRequeueAfter can be returned by EnsureStagingCluster to signal that
+// the reconcile should be retried shortly without triggering exponential backoff.
+var ErrRequeueAfter = errors.New("requeue after")
+
 const (
 	genericFinalizer      = "broker.platform-mesh.io/generic-finalizer"
 	consumerClusterAnn    = "broker.platform-mesh.io/consumer-cluster"
@@ -67,6 +71,47 @@ type Options struct {
 	GetProviders              func(metav1.GroupVersionResource) map[string]map[string]brokerv1alpha1.AcceptAPI
 	GetProviderAcceptedAPIs   func(string, metav1.GroupVersionResource) ([]brokerv1alpha1.AcceptAPI, error)
 	GetMigrationConfiguration func(metav1.GroupVersionKind, metav1.GroupVersionKind) (brokerv1alpha1.MigrationConfiguration, bool)
+
+	// GetStagingCluster returns the staging cluster name for the given consumer
+	// cluster and GVR if a staging workspace already exists. Returns "", false, nil
+	// when none exists. If nil, providerClusterAnn on the consumer object is used.
+	GetStagingCluster func(ctx context.Context, consumerCluster string, gvr metav1.GroupVersionResource) (string, bool, error)
+
+	// EnsureStagingCluster creates a staging workspace for (consumerCluster,
+	// providerClusterName) if needed and returns the staging cluster name once
+	// ready. Returns an error if not yet ready (caller should requeue).
+	// If nil, providerClusterName is returned unchanged.
+	EnsureStagingCluster func(ctx context.Context, consumerCluster, providerClusterName string, gvr metav1.GroupVersionResource) (string, error)
+
+	// GetActiveMigration returns the old and new staging cluster names if a
+	// migration is in progress for the given (consumer, currentProvider) pair.
+	// currentProvider is the name of the staging cluster that triggered the event;
+	// implementations must use it to select the correct migration when multiple
+	// concurrent migrations exist for the same consumer.
+	// If nil, newProviderClusterAnn on the consumer object is used.
+	GetActiveMigration func(ctx context.Context, consumerCluster, currentProviderCluster string) (oldCluster, newCluster string, found bool, err error)
+
+	// SetNewStagingCluster records the migration-target staging cluster for the
+	// given current staging cluster. If nil, newProviderClusterAnn is written
+	// on the consumer object instead.
+	SetNewStagingCluster func(ctx context.Context, currentStagingCluster, newStagingCluster string) error
+
+	// ClearNewStagingCluster removes migration state after a cutover completes.
+	// If nil, newProviderClusterAnn is removed from the consumer object instead.
+	ClearNewStagingCluster func(ctx context.Context, oldStagingCluster string) error
+
+	// TrackResourceInStagingWorkspace records that the given consumer resource
+	// (identified by namespace+name) is actively using the staging workspace.
+	// Called when a resource is first written to the staging cluster.
+	// If nil, no tracking is performed.
+	TrackResourceInStagingWorkspace func(ctx context.Context, stagingCluster, namespace, name string) error
+
+	// UntrackResourceFromStagingWorkspace removes the tracking record for the
+	// given consumer resource. If no resources remain, the staging workspace is
+	// eligible for deletion and will be torn down.
+	// Called when a resource is deleted from the staging cluster.
+	// If nil, no tracking is performed.
+	UntrackResourceFromStagingWorkspace func(ctx context.Context, stagingCluster, namespace, name string) error
 }
 
 // SetupController creates a controller for the resource specified by GVK.
@@ -177,6 +222,10 @@ func (t *objectReconcileTask) Run(ctx context.Context) (mctrl.Result, error) {
 
 	cont, err := t.determineClusters(ctx)
 	if err != nil {
+		if errors.Is(err, ErrRequeueAfter) {
+			t.log.Info("Staging workspace not ready, requeueing", "reason", err)
+			return mctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
 		t.log.Error(err, "Failed to determine clusters")
 		return mctrl.Result{}, err
 	}
@@ -222,54 +271,10 @@ func (t *objectReconcileTask) Run(ctx context.Context) (mctrl.Result, error) {
 
 	if t.newProviderCluster != nil || !providerAccepts {
 		t.log.Info("Provider no longer accepts resource")
-		if err := t.newProvider(ctx, consumerObj); err != nil {
-			return mctrl.Result{}, err
+		result, done, err := t.runMigration(ctx, consumerObj)
+		if err != nil || done {
+			return result, err
 		}
-
-		status, found, err := t.getNewProviderStatus(ctx)
-		if err != nil {
-			return mctrl.Result{}, err
-		}
-		if found && !status.Continue() {
-			return mctrl.Result{}, nil
-		}
-
-		cont, state, err := t.migrate(ctx, consumerObj)
-		if err != nil {
-			t.log.Error(err, "Failed to check migration status")
-			return mctrl.Result{}, err
-		}
-		if !cont {
-			t.log.Info("Migration not yet ready to continue, waiting")
-			return mctrl.Result{RequeueAfter: time.Second}, nil
-		}
-
-		// Copy related resources from new provider when the cutover
-		// to the new provider can start.
-		switch state {
-		case brokerv1alpha1.MigrationStateInitialCompleted, brokerv1alpha1.MigrationStateCutoverInProgress, brokerv1alpha1.MigrationStateCutoverCompleted:
-			t.log.Info("Syncing related resources from new provider")
-			if err := t.syncRelatedResources(ctx, t.newProviderName, t.newProviderCluster); err != nil {
-				return mctrl.Result{}, err
-			}
-		}
-
-		if state != brokerv1alpha1.MigrationStateCutoverCompleted {
-			t.log.Info("Migration not yet completed, waiting")
-			return mctrl.Result{RequeueAfter: time.Second}, nil
-		}
-
-		t.log.Info("Deleting from old provider")
-		if err := t.deleteObj(ctx, t.providerCluster, t.providerNamespacedName()); err != nil {
-			return mctrl.Result{}, fmt.Errorf("failed to delete resource from old provider cluster %q: %w", t.providerName, err)
-		}
-
-		t.providerName = t.newProviderName
-		t.providerCluster = t.newProviderCluster
-		t.newProviderName = ""
-		t.newProviderCluster = nil
-
-		return mctrl.Result{Requeue: true}, t.decorateInConsumer(ctx)
 	}
 
 	if err := t.syncResource(ctx, t.providerName, t.providerCluster); err != nil {
@@ -312,25 +317,61 @@ func (t *objectReconcileTask) getPossibleProvider(obj *unstructured.Unstructured
 	return "", fmt.Errorf("no accepting cluster found for GVR %v", t.gvr)
 }
 
-func (t *objectReconcileTask) getProviderName(obj *unstructured.Unstructured) (string, error) {
-	providerName, ok := obj.GetAnnotations()[providerClusterAnn]
-	if ok && providerName != "" {
-		t.log.Info("Found provider cluster annotation", "provider", providerName)
-		return providerName, nil
+func (t *objectReconcileTask) getProviderName(ctx context.Context, obj *unstructured.Unstructured) (string, error) {
+	if t.opts.GetStagingCluster != nil {
+		stagingCluster, found, err := t.opts.GetStagingCluster(ctx, t.consumerName, t.gvr)
+		if err != nil {
+			return "", err
+		}
+		if found && stagingCluster != "" {
+			t.log.Info("Found existing staging cluster", "stagingCluster", stagingCluster)
+			return stagingCluster, nil
+		}
+	} else {
+		providerName, ok := obj.GetAnnotations()[providerClusterAnn]
+		if ok && providerName != "" {
+			t.log.Info("Found provider cluster annotation", "provider", providerName)
+			return providerName, nil
+		}
 	}
 
-	t.log.Info("Found no provider in annotations, looking for possible providers")
-	return t.getPossibleProvider(obj)
+	t.log.Info("No existing provider found, looking for possible providers")
+	possibleProvider, err := t.getPossibleProvider(obj)
+	if err != nil {
+		return "", err
+	}
+
+	if t.opts.EnsureStagingCluster != nil {
+		return t.opts.EnsureStagingCluster(ctx, t.consumerName, possibleProvider, t.gvr)
+	}
+	return possibleProvider, nil
 }
 
-func (t *objectReconcileTask) getNewProviderName(obj *unstructured.Unstructured) (string, error) {
-	providerName, ok := obj.GetAnnotations()[newProviderClusterAnn]
-	if ok && providerName != "" {
-		t.log.Info("Found new provider cluster annotation", "newProvider", providerName)
-		return providerName, nil
+func (t *objectReconcileTask) getNewProviderName(ctx context.Context, obj *unstructured.Unstructured) (string, error) {
+	// Already determined (e.g. from determineClusters via GetActiveMigration).
+	if t.newProviderName != "" {
+		return t.newProviderName, nil
 	}
 
-	return t.getPossibleProvider(obj)
+	if t.opts.GetStagingCluster == nil {
+		// Legacy annotation-based approach.
+		providerName, ok := obj.GetAnnotations()[newProviderClusterAnn]
+		if ok && providerName != "" {
+			t.log.Info("Found new provider cluster annotation", "newProvider", providerName)
+			return providerName, nil
+		}
+	}
+
+	t.log.Info("Looking for new possible provider")
+	possibleProvider, err := t.getPossibleProvider(obj)
+	if err != nil {
+		return "", err
+	}
+
+	if t.opts.EnsureStagingCluster != nil {
+		return t.opts.EnsureStagingCluster(ctx, t.consumerName, possibleProvider, t.gvr)
+	}
+	return possibleProvider, nil
 }
 
 func (t *objectReconcileTask) determineClusters(ctx context.Context) (bool, error) {
@@ -395,26 +436,51 @@ func (t *objectReconcileTask) determineClusters(ctx context.Context) (bool, erro
 		return false, fmt.Errorf("failed to get resource from consumer cluster %q: %w", t.consumerName, err)
 	}
 
-	var ok bool
-	t.newProviderName, ok = consumerObj.GetAnnotations()[newProviderClusterAnn]
-	if !ok {
-		// No new provider annotation, continue
-		return true, nil
-	}
-	t.log.Info("Found new provider annotation", "newProvider", t.newProviderName)
-
-	if string(t.req.ClusterName) == t.newProviderName {
-		t.log.Info("Event comes from new provider cluster")
-		t.newProviderCluster = t.providerCluster
-		if err := t.setProviderCluster(ctx, consumerObj.GetAnnotations()[providerClusterAnn]); err != nil {
-			return false, err
+	if t.opts.GetActiveMigration != nil {
+		oldCluster, newCluster, found, merr := t.opts.GetActiveMigration(ctx, t.consumerName, string(t.req.ClusterName))
+		if merr != nil {
+			return false, merr
 		}
-		return true, nil
-	}
+		if found {
+			t.newProviderName = newCluster
+			if t.req.ClusterName == multicluster.ClusterName(newCluster) {
+				t.log.Info("Event comes from new staging cluster")
+				t.newProviderCluster, err = t.opts.GetProviderCluster(ctx, multicluster.ClusterName(newCluster))
+				if err != nil {
+					return false, fmt.Errorf("failed to get new staging cluster %q: %w", newCluster, err)
+				}
+				if err := t.setProviderCluster(ctx, oldCluster); err != nil {
+					return false, err
+				}
+				return true, nil
+			}
+			t.newProviderCluster, err = t.opts.GetProviderCluster(ctx, multicluster.ClusterName(newCluster))
+			if err != nil {
+				return false, fmt.Errorf("failed to get new staging cluster %q: %w", newCluster, err)
+			}
+		}
+	} else {
+		var ok bool
+		t.newProviderName, ok = consumerObj.GetAnnotations()[newProviderClusterAnn]
+		if !ok {
+			// No new provider annotation, continue
+			return true, nil
+		}
+		t.log.Info("Found new provider annotation", "newProvider", t.newProviderName)
 
-	t.newProviderCluster, err = t.opts.GetProviderCluster(ctx, multicluster.ClusterName(t.newProviderName))
-	if err != nil {
-		return false, fmt.Errorf("failed to get new provider cluster %q: %w", t.newProviderName, err)
+		if t.req.ClusterName == multicluster.ClusterName(t.newProviderName) {
+			t.log.Info("Event comes from new provider cluster")
+			t.newProviderCluster = t.providerCluster
+			if err := t.setProviderCluster(ctx, consumerObj.GetAnnotations()[providerClusterAnn]); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
+
+		t.newProviderCluster, err = t.opts.GetProviderCluster(ctx, multicluster.ClusterName(t.newProviderName))
+		if err != nil {
+			return false, fmt.Errorf("failed to get new provider cluster %q: %w", t.newProviderName, err)
+		}
 	}
 
 	return true, nil
@@ -492,7 +558,7 @@ func (t *objectReconcileTask) setProviderClusterFromConsumer(ctx context.Context
 		return fmt.Errorf("failed to get resource from consumer cluster %q: %w", t.consumerName, err)
 	}
 
-	possibleProviderName, err := t.getProviderName(consumerObj)
+	possibleProviderName, err := t.getProviderName(ctx, consumerObj)
 	if err != nil {
 		return fmt.Errorf("failed to determine provider cluster: %w", err)
 	}
@@ -555,6 +621,31 @@ func (t *objectReconcileTask) deleteObjs(ctx context.Context) error {
 		if err := t.deleteObj(ctx, t.providerCluster, t.providerNamespacedName()); err != nil {
 			return fmt.Errorf("failed to delete resource from provider cluster %q: %w", t.providerName, err)
 		}
+		if t.opts.UntrackResourceFromStagingWorkspace != nil {
+			nn := t.consumerNamespacedName()
+			if err := t.opts.UntrackResourceFromStagingWorkspace(ctx, t.providerName, nn.Namespace, nn.Name); err != nil {
+				return fmt.Errorf("failed to untrack resource from staging workspace: %w", err)
+			}
+		}
+	}
+
+	// If the object is deleted mid-migration, clean up the copy that was
+	// already created in the new provider's staging cluster.
+	if t.newProviderCluster != nil {
+		if err := t.deleteObj(ctx, t.newProviderCluster, t.providerNamespacedName()); err != nil {
+			return fmt.Errorf("failed to delete resource from new provider cluster %q: %w", t.newProviderName, err)
+		}
+		if t.opts.UntrackResourceFromStagingWorkspace != nil {
+			nn := t.consumerNamespacedName()
+			if err := t.opts.UntrackResourceFromStagingWorkspace(ctx, t.newProviderName, nn.Namespace, nn.Name); err != nil {
+				return fmt.Errorf("failed to untrack resource from new staging workspace: %w", err)
+			}
+		}
+		if t.opts.ClearNewStagingCluster != nil {
+			if err := t.opts.ClearNewStagingCluster(ctx, t.providerName); err != nil {
+				return fmt.Errorf("failed to clear new staging cluster marker: %w", err)
+			}
+		}
 	}
 
 	if t.consumerCluster != nil {
@@ -601,6 +692,15 @@ func (t *objectReconcileTask) decorateInConsumer(ctx context.Context) error {
 		}
 	}
 
+	// When staging workspace callbacks are configured, routing state is managed
+	// via StagingWorkspace CRs in the coordination cluster, not via annotations
+	// on consumer objects. Consumers must not see or be able to influence rb's
+	// internal routing decisions.
+	if t.opts.GetStagingCluster != nil {
+		return nil
+	}
+
+	// Legacy annotation-based routing for non-staging deployments.
 	anns := consumerObj.GetAnnotations()
 	if anns == nil {
 		anns = make(map[string]string)
@@ -645,7 +745,7 @@ func (t *objectReconcileTask) decorateInConsumer(ctx context.Context) error {
 
 func (t *objectReconcileTask) newProvider(ctx context.Context, consumerObj *unstructured.Unstructured) error {
 	var err error
-	t.newProviderName, err = t.getNewProviderName(consumerObj)
+	t.newProviderName, err = t.getNewProviderName(ctx, consumerObj)
 	if err != nil {
 		return fmt.Errorf("failed to determine new provider cluster: %w", err)
 	}
@@ -660,13 +760,19 @@ func (t *objectReconcileTask) newProvider(ctx context.Context, consumerObj *unst
 		return fmt.Errorf("failed to get new provider cluster %q: %w", t.newProviderName, err)
 	}
 
-	consumerObj, err = t.getConsumerObj(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get resource from consumer cluster %q: %w", t.consumerName, err)
-	}
-	kubernetes.SetAnnotation(consumerObj, newProviderClusterAnn, t.newProviderName)
-	if err := t.consumerCluster.GetClient().Update(ctx, consumerObj); err != nil {
-		return fmt.Errorf("failed to set new provider cluster annotation in consumer: %w", err)
+	if t.opts.SetNewStagingCluster != nil {
+		if err := t.opts.SetNewStagingCluster(ctx, t.providerName, t.newProviderName); err != nil {
+			return fmt.Errorf("failed to record new staging cluster: %w", err)
+		}
+	} else {
+		consumerObj, err = t.getConsumerObj(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get resource from consumer cluster %q: %w", t.consumerName, err)
+		}
+		kubernetes.SetAnnotation(consumerObj, newProviderClusterAnn, t.newProviderName)
+		if err := t.consumerCluster.GetClient().Update(ctx, consumerObj); err != nil {
+			return fmt.Errorf("failed to set new provider cluster annotation in consumer: %w", err)
+		}
 	}
 
 	if err := t.syncResource(ctx, t.newProviderName, t.newProviderCluster); err != nil {
@@ -674,6 +780,105 @@ func (t *objectReconcileTask) newProvider(ctx context.Context, consumerObj *unst
 	}
 
 	return nil
+}
+
+// runMigration drives the migration of a resource to a new provider.
+// It returns (result, done, err). When done is true the caller should return
+// immediately with the given result and error; when done is false the caller
+// may continue with the normal sync path (same-provider no-op case).
+func (t *objectReconcileTask) runMigration(ctx context.Context, consumerObj *unstructured.Unstructured) (mctrl.Result, bool, error) {
+	// Always call newProvider to sync the resource to the new provider and
+	// ensure the new provider cluster is set. This matches the original
+	// inline behavior which called newProvider on every reconcile loop.
+	if err := t.newProvider(ctx, consumerObj); err != nil {
+		return mctrl.Result{}, true, fmt.Errorf("failed to determine new provider: %w", err)
+	}
+
+	// Post-restart transient: stagingToProvider map is empty so
+	// providerAcceptsObj returns false, but getPossibleProvider picks the
+	// same provider again. Skip the migration entirely in that case.
+	if t.newProviderName == t.providerName {
+		t.log.Info("New provider equals current provider, skipping migration")
+		t.newProviderName = ""
+		t.newProviderCluster = nil
+		if t.opts.ClearNewStagingCluster != nil {
+			if err := t.opts.ClearNewStagingCluster(ctx, t.providerName); err != nil {
+				return mctrl.Result{}, true, fmt.Errorf("failed to clear new staging cluster: %w", err)
+			}
+		} else {
+			// Non-staging path: clear the stale annotation directly on the
+			// consumer object so the next reconcile starts fresh.
+			anns := consumerObj.GetAnnotations()
+			if _, ok := anns[newProviderClusterAnn]; ok {
+				delete(anns, newProviderClusterAnn)
+				consumerObj.SetAnnotations(anns)
+				if err := t.consumerCluster.GetClient().Update(ctx, consumerObj); err != nil {
+					return mctrl.Result{}, true, fmt.Errorf("failed to clear stale new-provider annotation: %w", err)
+				}
+			}
+		}
+		return mctrl.Result{}, false, nil
+	}
+
+	canContinue, migrationState, err := t.migrate(ctx, consumerObj)
+	if err != nil {
+		t.log.Error(err, "Failed to check migration status")
+		return mctrl.Result{}, true, err
+	}
+	if !canContinue {
+		t.log.Info("Migration not yet ready to continue, waiting")
+		return mctrl.Result{RequeueAfter: time.Second}, true, nil
+	}
+
+	// Copy related resources from new provider when cutover can start.
+	switch migrationState {
+	case brokerv1alpha1.MigrationStateInitialCompleted, brokerv1alpha1.MigrationStateCutoverInProgress, brokerv1alpha1.MigrationStateCutoverCompleted:
+		t.log.Info("Syncing related resources from new provider")
+		if err := t.syncRelatedResources(ctx, t.newProviderName, t.newProviderCluster); err != nil {
+			return mctrl.Result{}, true, err
+		}
+	}
+
+	if migrationState != brokerv1alpha1.MigrationStateCutoverCompleted {
+		// Migration still in progress: check new provider status before waiting.
+		status, found, err := t.getNewProviderStatus(ctx)
+		if err != nil {
+			return mctrl.Result{}, true, err
+		}
+		if found && !status.Continue() {
+			t.log.Info("New provider status indicates to not continue")
+			return mctrl.Result{}, true, nil
+		}
+		t.log.Info("Migration not yet completed, waiting")
+		return mctrl.Result{RequeueAfter: time.Second}, true, nil
+	}
+
+	// Cutover completed: clean up the old provider and swap state.
+	t.log.Info("Migration cutover completed, deleting from old provider", "provider", t.providerName)
+	if err := t.deleteObj(ctx, t.providerCluster, t.providerNamespacedName()); err != nil {
+		return mctrl.Result{}, true, fmt.Errorf("failed to delete resource from old provider cluster %q: %w", t.providerName, err)
+	}
+
+	if t.opts.UntrackResourceFromStagingWorkspace != nil {
+		nn := t.consumerNamespacedName()
+		if err := t.opts.UntrackResourceFromStagingWorkspace(ctx, t.providerName, nn.Namespace, nn.Name); err != nil {
+			return mctrl.Result{}, true, fmt.Errorf("failed to untrack resource from old staging workspace %q: %w", t.providerName, err)
+		}
+	}
+
+	oldProviderName := t.providerName
+	t.providerName = t.newProviderName
+	t.providerCluster = t.newProviderCluster
+	t.newProviderName = ""
+	t.newProviderCluster = nil
+
+	if t.opts.ClearNewStagingCluster != nil {
+		if err := t.opts.ClearNewStagingCluster(ctx, oldProviderName); err != nil {
+			return mctrl.Result{}, true, fmt.Errorf("failed to clear new staging cluster: %w", err)
+		}
+	}
+
+	return mctrl.Result{Requeue: true}, true, t.decorateInConsumer(ctx)
 }
 
 // migrate handles migration of the resource from one provider to another.
@@ -773,6 +978,14 @@ func (t *objectReconcileTask) decorateInProvider(ctx context.Context, providerNa
 				return err
 			}
 		}
+
+		if t.opts.TrackResourceInStagingWorkspace != nil {
+			nn := t.consumerNamespacedName()
+			if err := t.opts.TrackResourceInStagingWorkspace(ctx, providerName, nn.Namespace, nn.Name); err != nil {
+				return fmt.Errorf("failed to track resource in staging workspace: %w", err)
+			}
+		}
+
 		return nil
 	})
 }

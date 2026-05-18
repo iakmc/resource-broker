@@ -54,11 +54,12 @@ _setup() {
     log "Setting up platform kcp workspace"
     kcp::create_workspace "$kubeconfigs/kcp-admin.kubeconfig" "$ws_platform" "platform"
 
-    log "Installing migration CRDs into platform workspace"
+    log "Installing broker CRDs into platform workspace"
     kubectl::apply \
         "$ws_platform" \
         ./config/broker/crd/broker.platform-mesh.io_migrationconfigurations.yaml \
-        ./config/broker/crd/broker.platform-mesh.io_migrations.yaml
+        ./config/broker/crd/broker.platform-mesh.io_migrations.yaml \
+        ./config/broker/crd/broker.platform-mesh.io_stagingworkspaces.yaml
 
     log "Setting up AcceptAPI APIExport for providers"
     kcp::apiexport "$ws_platform" ./config/broker/crd/broker.platform-mesh.io_acceptapis.yaml \
@@ -84,6 +85,7 @@ _setup() {
 
     log "Setting up consumer kcp workspace"
     kcp::create_workspace "$kubeconfigs/kcp-admin.kubeconfig" "$ws_consumer" "consumer"
+
 }
 
 _cluster_id() {

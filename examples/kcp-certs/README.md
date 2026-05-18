@@ -121,21 +121,17 @@ provider clusters to their respective kcp workspaces.
 Now bind the AcceptAPI from the platform workspace into the internalca provider workspace:
 
 ```bash ci
-kubectl kcp bind apiexport root:platform:acceptapis \
-    --kubeconfig kubeconfigs/workspaces/internalca.kubeconfig \
-    --accept-permission-claim secrets.core \
-    --accept-permission-claim events.core \
-    --accept-permission-claim namespaces.core
+kcp::apibinding kubeconfigs/workspaces/internalca.kubeconfig \
+    "root:platform" acceptapis \
+    secrets "" 'get,list,watch'
 ```
 
 And do the same for the externalca provider workspace:
 
 ```bash ci
-kubectl kcp bind apiexport root:platform:acceptapis \
-    --kubeconfig kubeconfigs/workspaces/externalca.kubeconfig \
-    --accept-permission-claim secrets.core \
-    --accept-permission-claim events.core \
-    --accept-permission-claim namespaces.core
+kcp::apibinding kubeconfigs/workspaces/externalca.kubeconfig \
+    "root:platform" acceptapis \
+    secrets "" 'get,list,watch'
 ```
 
 And now create AcceptAPI resources in both provider workspaces.
@@ -155,8 +151,8 @@ apiVersion: broker.platform-mesh.io/v1alpha1
 kind: AcceptAPI
 metadata:
   annotations:
-    broker.platform-mesh.io/secret-name: kubeconfig-internalca
-  name: acceptapis.broker.platform-mesh.io
+    broker.platform-mesh.io/kcp-apiexport-name: certificates
+  name: certificates.example.platform-mesh.io
 spec:
   filters:
   - key: fqdn
@@ -168,13 +164,9 @@ spec:
 EOF
 ```
 
-Currently providers bind their own APIExport to get a virtual workspace
-and build a kubeconfig for the resource-broker to use. This kubeconfig
-is stored in a secret in their workspaces, which in turn is made
-accessible with a permission claim on the AcceptAPI binding.
-
-The annotation `broker.platform-mesh.io/secret-name` tells the
-resource-broker which secret to read the kubeconfig from.
+The annotation `broker.platform-mesh.io/kcp-apiexport-name` tells the
+resource-broker which APIExport on the provider workspace to use for
+routing.
 
 Now create the AcceptAPI for the externalca provider, which will
 accept Certificate resources with `spec.fqdn` ending with `corp.com`:
@@ -185,8 +177,8 @@ apiVersion: broker.platform-mesh.io/v1alpha1
 kind: AcceptAPI
 metadata:
   annotations:
-    broker.platform-mesh.io/secret-name: kubeconfig-externalca
-  name: acceptapis.broker.platform-mesh.io
+    broker.platform-mesh.io/kcp-apiexport-name: certificates
+  name: certificates.example.platform-mesh.io
 spec:
   filters:
   - key: fqdn
@@ -214,23 +206,15 @@ Certificates available yet:
 kubectl --kubeconfig="./kubeconfigs/workspaces/consumer.kubeconfig" api-resources --api-group example.platform-mesh.io
 ```
 
-<!--
-```bash ci
-if kubectl --kubeconfig="./kubeconfigs/workspaces/consumer.kubeconfig" api-resources --api-group example.platform-mesh.io | grep -q Certificate; then
-    echo "Certificate API should not be available yet"
-    exit 1
-fi
-```
--->
 
 Now bind the certificate APIExport from the platform workspace into the consumer workspace:
 
 ```bash ci
-kubectl kcp bind apiexport root:platform:certificates \
-    --kubeconfig="./kubeconfigs/workspaces/consumer.kubeconfig" \
-    --accept-permission-claim secrets.core \
-    --accept-permission-claim events.core \
-    --accept-permission-claim namespaces.core
+kcp::apibinding kubeconfigs/workspaces/consumer.kubeconfig \
+    "root:platform" certificates \
+    secrets "" '*' \
+    events "" '*' \
+    namespaces "" '*'
 ```
 
 This will create an APIBinding in the consumer workspace:
@@ -323,68 +307,18 @@ The resource-broker will see the Certificate in the virtual workspace of the API
 > The original consumer-side name `cert-from-consumer` becomes `{hash}-cert-from-consumer` in
 > the provider's virtual workspace.
 
-In the provider's virtual workspace the Certificate looks like this.
-
-Grab the hash-prefixed name from the VW:
-
-<!--
-Wait for the certificate to appear in the provider's virtual workspace:
-```bash ci
-kubectl::wait::list \
-    kubeconfigs/workspaces/internalca.vw.kubeconfig \
-    certificates.example.platform-mesh.io \
-    --all-namespaces
-```
--->
-
-```bash ci
-provider_cert="$(kubectl --kubeconfig kubeconfigs/workspaces/internalca.vw.kubeconfig get certificates.example.platform-mesh.io -A -o jsonpath="{.items[0].metadata.name}")"
-```
-
-```bash ci
-kubectl --kubeconfig kubeconfigs/workspaces/internalca.vw.kubeconfig get certificates.example.platform-mesh.io "$provider_cert" -o yaml
-```
-
-```yaml
-apiVersion: v1
-items:
-- apiVersion: example.platform-mesh.io/v1alpha1
-  kind: Certificate
-  metadata:
-    # ...
-    name: {hash}-cert-from-consumer
-    namespace: default
-    # ...
-  spec:
-    fqdn: app.internal.corp
-  status:
-    # ...
-    relatedResources:
-      secret:
-        gvk:
-          group: core
-          kind: Secret
-          version: v1
-        name: {hash}-cert-from-consumer
-        namespace: default
-    # ...
-kind: List
-metadata:
-  resourceVersion: ""
-```
-
-On the compute cluster, api-syncagent further transforms the name using its own cluster IDs and hashes:
+Wait for the certificate to appear on the internalca provider cluster:
 
 <!--
 ```bash ci
 kubectl::wait::list \
     kubeconfigs/internalca.kubeconfig \
     certificates.example.platform-mesh.io \
-    --all-namespaces -l kro.run/owned=true
+    --all-namespaces
 ```
 -->
 
-```bash ci
+```bash
 kubectl --kubeconfig kubeconfigs/internalca.kubeconfig get certificates.example.platform-mesh.io --all-namespaces
 ```
 
@@ -428,21 +362,26 @@ metadata:
 Grab the name and namespace from the compute cluster:
 
 ```bash ci
-secret_name="$(kubectl --kubeconfig kubeconfigs/internalca.kubeconfig get certificates.example.platform-mesh.io --all-namespaces -o jsonpath="{.items[0].metadata.name}")"
-secret_namespace="$(kubectl --kubeconfig kubeconfigs/internalca.kubeconfig get certificates.example.platform-mesh.io --all-namespaces -o jsonpath="{.items[0].metadata.namespace}")"
+cert_name="$(kubectl --kubeconfig kubeconfigs/internalca.kubeconfig get certificates.example.platform-mesh.io --all-namespaces -o jsonpath="{.items[0].metadata.name}")"
+cert_namespace="$(kubectl --kubeconfig kubeconfigs/internalca.kubeconfig get certificates.example.platform-mesh.io --all-namespaces -o jsonpath="{.items[0].metadata.namespace}")"
+kubectl --kubeconfig kubeconfigs/internalca.kubeconfig wait \
+    "certificates.example.platform-mesh.io/$cert_name" \
+    --namespace="$cert_namespace" \
+    --for=jsonpath="{.status.relatedResources.secret.name}" \
+    --timeout=5m
+secret_name="$(kubectl --kubeconfig kubeconfigs/internalca.kubeconfig get "certificates.example.platform-mesh.io/$cert_name" --namespace="$cert_namespace" -o jsonpath="{.status.relatedResources.secret.name}")"
+secret_namespace="$cert_namespace"
 ```
 
 <!--
-Wait for the certificate to be issued.
 ```bash ci
 kubectl::wait::cert::subject \
     kubeconfigs/internalca.kubeconfig \
-    "$provider_cert" \
+    "$secret_name" \
     "$secret_namespace" \
     "app.internal.corp"
 ```
 -->
-
 
 The provider has created a cert-manager Certificate, which in turn
 generated a Secret with the issued certificate:
@@ -454,16 +393,15 @@ kubectl --kubeconfig kubeconfigs/internalca.kubeconfig get secrets --namespace "
 Decoding the `tls.crt` field shows the certificate was correctly issued for `app.internal.corp`:
 
 ```bash ci
-kubectl --kubeconfig kubeconfigs/internalca.kubeconfig get secrets --namespace "$secret_namespace" "$provider_cert" -o jsonpath="{.data.tls\.crt}" \
+kubectl --kubeconfig kubeconfigs/internalca.kubeconfig get secrets --namespace "$secret_namespace" "$secret_name" -o jsonpath="{.data.tls\.crt}" \
     | base64 --decode \
     | openssl x509 -noout -subject
 # subject=CN=app.internal.corp
 ```
 
-The same secret is now also available in the consumer cluster:
+Wait for the certificate secret to be synced to the consumer workspace:
 
 <!--
-Wait for the certificate secret to be synced:
 ```bash ci
 kubectl::wait::cert::subject \
     kubeconfigs/workspaces/consumer.kubeconfig \
@@ -474,6 +412,8 @@ kubectl::wait::cert::subject \
 -->
 
 ```bash ci
+kubectl --kubeconfig kubeconfigs/workspaces/consumer.kubeconfig \
+    wait secret/cert-from-consumer --for=create --timeout=5m
 kubectl --kubeconfig kubeconfigs/workspaces/consumer.kubeconfig get secrets "cert-from-consumer"
 ```
 
@@ -481,7 +421,7 @@ And comparing the serial number shows it's the same certificate:
 
 ```bash ci
 kubectl --kubeconfig kubeconfigs/internalca.kubeconfig \
-    get secrets --namespace "$secret_namespace" "$provider_cert" \
+    get secrets --namespace "$secret_namespace" "$secret_name" \
         -o jsonpath="{.data.tls\.crt}" \
     | base64 --decode \
     | openssl x509 -noout -serial
@@ -521,37 +461,27 @@ and back, so the secret name and namespace can be grabbed the same way:
 kubectl::wait::list \
     kubeconfigs/externalca.kubeconfig \
     certificates.example.platform-mesh.io \
-    --all-namespaces -l kro.run/owned=true
-```
--->
-
-Grab the hash-prefixed name from the externalca VW:
-
-<!--
-Wait for the certificate to appear in the externalca provider's virtual workspace:
-```bash ci
-kubectl::wait::list \
-    kubeconfigs/workspaces/externalca.vw.kubeconfig \
-    certificates.example.platform-mesh.io \
     --all-namespaces
 ```
 -->
 
 ```bash ci
-provider_cert="$(kubectl --kubeconfig kubeconfigs/workspaces/externalca.vw.kubeconfig get certificates.example.platform-mesh.io -A -o jsonpath="{.items[0].metadata.name}")"
-```
-
-```bash ci
-secret_name="$(kubectl --kubeconfig kubeconfigs/externalca.kubeconfig get certificates.example.platform-mesh.io --all-namespaces -o jsonpath="{.items[0].metadata.name}")"
-secret_namespace="$(kubectl --kubeconfig kubeconfigs/externalca.kubeconfig get certificates.example.platform-mesh.io --all-namespaces -o jsonpath="{.items[0].metadata.namespace}")"
+cert_name="$(kubectl --kubeconfig kubeconfigs/externalca.kubeconfig get certificates.example.platform-mesh.io --all-namespaces -o jsonpath="{.items[0].metadata.name}")"
+cert_namespace="$(kubectl --kubeconfig kubeconfigs/externalca.kubeconfig get certificates.example.platform-mesh.io --all-namespaces -o jsonpath="{.items[0].metadata.namespace}")"
+kubectl --kubeconfig kubeconfigs/externalca.kubeconfig wait \
+    "certificates.example.platform-mesh.io/$cert_name" \
+    --namespace="$cert_namespace" \
+    --for=jsonpath="{.status.relatedResources.secret.name}" \
+    --timeout=5m
+secret_name="$(kubectl --kubeconfig kubeconfigs/externalca.kubeconfig get "certificates.example.platform-mesh.io/$cert_name" --namespace="$cert_namespace" -o jsonpath="{.status.relatedResources.secret.name}")"
+secret_namespace="$cert_namespace"
 ```
 
 <!--
-Wait for the certificate to be issued.
 ```bash ci
 kubectl::wait::cert::subject \
     kubeconfigs/externalca.kubeconfig \
-    "$provider_cert" \
+    "$secret_name" \
     "$secret_namespace" \
     "app.corp.com"
 ```
@@ -561,7 +491,7 @@ And decoding the `tls.crt` field shows the certificate was correctly issued for 
 
 ```bash ci
 kubectl --kubeconfig kubeconfigs/externalca.kubeconfig \
-    get secrets --namespace "$secret_namespace" "$provider_cert" \
+    get secrets --namespace "$secret_namespace" "$secret_name" \
         -o jsonpath="{.data.tls\.crt}" \
     | base64 --decode \
     | openssl x509 -noout -subject
@@ -569,7 +499,6 @@ kubectl --kubeconfig kubeconfigs/externalca.kubeconfig \
 ```
 
 <!--
-Wait for the certificate secret to be synced:
 ```bash ci
 kubectl::wait::cert::subject \
     kubeconfigs/workspaces/consumer.kubeconfig \
@@ -594,7 +523,7 @@ And again comparing the serial numbers, now with the certificate in the external
 
 ```bash ci
 kubectl --kubeconfig kubeconfigs/externalca.kubeconfig \
-    get secrets --namespace "$secret_namespace" "$provider_cert" \
+    get secrets --namespace "$secret_namespace" "$secret_name" \
         -o jsonpath="{.data.tls\.crt}" \
     | base64 --decode \
     | openssl x509 -noout -serial
