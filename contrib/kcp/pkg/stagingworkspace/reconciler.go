@@ -240,7 +240,8 @@ func (r *Reconciler) reconcileWorkspace(ctx context.Context, req ctrl.Request) (
 
 	// If the SW was previously tracking resources (ResourceTrackedAnnotation is
 	// set) and all resource finalizers have since been removed, the broker is
-	// done with it — delete it so finalize() can clean up the kcp workspace.
+	// done with it. First move to Terminating so the broker stops routing new
+	// CRs here, then on the next reconcile trigger the actual deletion.
 	if sw.Status.Phase == brokerv1alpha1.StagingWorkspacePhaseReady &&
 		sw.Annotations[ResourceTrackedAnnotation] == "true" {
 		hasResourceFinalizer := false
@@ -251,12 +252,22 @@ func (r *Reconciler) reconcileWorkspace(ctx context.Context, req ctrl.Request) (
 			}
 		}
 		if !hasResourceFinalizer {
-			log.Info("No resource finalizers remain, deleting staging workspace", "stagingWorkspace", sw.Name)
-			if err := r.Delete(ctx, sw); err != nil && !apierrors.IsNotFound(err) {
-				return ctrl.Result{}, fmt.Errorf("failed to delete empty staging workspace: %w", err)
+			log.Info("No resource finalizers remain, marking staging workspace as Terminating", "stagingWorkspace", sw.Name)
+			sw.Status.Phase = brokerv1alpha1.StagingWorkspacePhaseTerminating
+			if err := r.Client.Status().Update(ctx, sw); err != nil {
+				return ctrl.Result{}, err
 			}
-			return ctrl.Result{}, nil
+			return ctrl.Result{Requeue: true}, nil
 		}
+	}
+
+	// Perform actual deletion once Terminating phase is set.
+	if sw.Status.Phase == brokerv1alpha1.StagingWorkspacePhaseTerminating {
+		log.Info("Deleting staging workspace in Terminating phase", "stagingWorkspace", sw.Name)
+		if err := r.Delete(ctx, sw); err != nil && !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, fmt.Errorf("failed to delete terminating staging workspace: %w", err)
+		}
+		return ctrl.Result{}, nil
 	}
 
 	result, err := r.ensureWorkspace(ctx, sw)

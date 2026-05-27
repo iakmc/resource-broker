@@ -472,6 +472,11 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 			b.lock.RLock()
 			for i := range swList.Items {
 				sw := &swList.Items[i]
+				// Skip workspaces being torn down — no new CRs should be routed there.
+				if sw.Status.Phase == brokerv1alpha1.StagingWorkspacePhaseTerminating ||
+					!sw.DeletionTimestamp.IsZero() {
+					continue
+				}
 				// Label stores "."-separated form; convert back to "#"-separated for apiAccepters lookup.
 				providerCluster := strings.ReplaceAll(sw.Labels[stagingProviderClusterLabel], ".", "#")
 				acceptAPIs, ok := b.apiAccepters[gvr][providerCluster]
@@ -711,6 +716,19 @@ func New(opts Options) (*Broker, error) { //nolint:gocyclo
 			// The staging-workspace reconciler watches StagingWorkspace updates and
 			// deletes the SW once all resource finalizers are gone.
 			return b.localClient.Update(ctx, sw)
+		},
+
+		GetConsumerFromStagingCluster: func(ctx context.Context, stagingCluster string) (string, error) {
+			swList := &brokerv1alpha1.StagingWorkspaceList{}
+			if err := b.localClient.List(ctx, swList, client.MatchingLabels{
+				stagingworkspace.StagingClusterLabelKey: clusterNameToStagingLabel(stagingCluster),
+			}); err != nil {
+				return "", err
+			}
+			if len(swList.Items) == 0 {
+				return "", nil // staging workspace gone, nothing to do
+			}
+			return swList.Items[0].Spec.ConsumerCluster, nil
 		},
 	}
 

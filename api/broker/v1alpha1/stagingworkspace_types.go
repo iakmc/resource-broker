@@ -51,6 +51,9 @@ const (
 	StagingWorkspacePhaseReady StagingWorkspacePhase = "Ready"
 	// StagingWorkspacePhaseFailed indicates the staging workspace could not be provisioned.
 	StagingWorkspacePhaseFailed StagingWorkspacePhase = "Failed"
+	// StagingWorkspacePhaseTerminating indicates the staging workspace is being torn down because
+	// all resources that were using it have been deleted. No new resources will be routed to it.
+	StagingWorkspacePhaseTerminating StagingWorkspacePhase = "Terminating"
 )
 
 // StagingWorkspaceStatus defines the observed state of StagingWorkspace.
