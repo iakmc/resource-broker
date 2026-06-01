@@ -112,6 +112,13 @@ type Options struct {
 	// Called when a resource is deleted from the staging cluster.
 	// If nil, no tracking is performed.
 	UntrackResourceFromStagingWorkspace func(ctx context.Context, stagingCluster, namespace, name string) error
+
+	// GetConsumerFromStagingCluster returns the consumer cluster name for the
+	// given staging cluster. When set, consumerClusterAnn and consumerNameAnn
+	// are not written to provider-side objects; the StagingWorkspace is the
+	// authoritative source for consumer→provider mapping.
+	// If nil, annotations on the provider object are used instead.
+	GetConsumerFromStagingCluster func(ctx context.Context, stagingCluster string) (consumerCluster string, err error)
 }
 
 // SetupController creates a controller for the resource specified by GVK.
@@ -498,6 +505,29 @@ func (t *objectReconcileTask) setConsumerCluster(ctx context.Context, name strin
 }
 
 func (t *objectReconcileTask) setConsumerClusterFromProvider(ctx context.Context) error {
+	if t.opts.GetConsumerFromStagingCluster != nil {
+		t.log.Info("Determining consumer cluster from staging workspace")
+		consumerCluster, err := t.opts.GetConsumerFromStagingCluster(ctx, t.providerName)
+		if err != nil {
+			return fmt.Errorf("failed to get consumer from staging cluster %q: %w", t.providerName, err)
+		}
+		if consumerCluster == "" {
+			t.log.Info("No consumer found for staging cluster, skipping")
+			return nil
+		}
+		// Recover the original consumer resource name by stripping the
+		// deterministic hash prefix added by providerNamespacedName().
+		prefix := SanitizeClusterName(consumerCluster) + "-"
+		if stripped := strings.TrimPrefix(t.req.Name, prefix); stripped != t.req.Name {
+			t.consumerObjName = &types.NamespacedName{
+				Namespace: t.req.Namespace,
+				Name:      stripped,
+			}
+		}
+		t.log.Info("Resolved consumer from staging workspace", "consumer", consumerCluster)
+		return t.setConsumerCluster(ctx, consumerCluster)
+	}
+
 	t.log.Info("Determining consumer cluster from provider annotation")
 
 	// When the request comes from the provider side, t.req.NamespacedName
@@ -966,11 +996,16 @@ func (t *objectReconcileTask) decorateInProvider(ctx context.Context, providerNa
 			needsUpdate = true
 		}
 
-		anns := obj.GetAnnotations()
-		if anns[consumerClusterAnn] != t.consumerName || anns[consumerNameAnn] != consumerNN.Name {
-			kubernetes.SetAnnotation(obj, consumerClusterAnn, t.consumerName)
-			kubernetes.SetAnnotation(obj, consumerNameAnn, consumerNN.Name)
-			needsUpdate = true
+		// Skip consumer tracking annotations when StagingWorkspace is the
+		// authoritative source. Writing them would leak internal consumer cluster
+		// IDs onto objects that get synced to the provider's cluster by api-syncagent.
+		if t.opts.GetConsumerFromStagingCluster == nil {
+			anns := obj.GetAnnotations()
+			if anns[consumerClusterAnn] != t.consumerName || anns[consumerNameAnn] != consumerNN.Name {
+				kubernetes.SetAnnotation(obj, consumerClusterAnn, t.consumerName)
+				kubernetes.SetAnnotation(obj, consumerNameAnn, consumerNN.Name)
+				needsUpdate = true
+			}
 		}
 
 		if needsUpdate {

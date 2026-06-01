@@ -64,7 +64,7 @@ var (
 		"APIExportEndpointSlice name to watch for APIs to broker.",
 	)
 
-	fWorkspaceTreeRoot = flag.String("workspace-tree-root", "", "kcp workspace path under which staging workspaces are created (required)")
+	fWorkspaceTreeRoot = flag.String("workspace-tree-root", "root:platform", "kcp workspace path under which staging workspaces are created")
 )
 
 func main() {
@@ -82,11 +82,6 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
-
-	if *fWorkspaceTreeRoot == "" {
-		setupLog.Error(nil, "--workspace-tree-root is required")
-		os.Exit(1)
-	}
 
 	setupLog.Info("Starting resource-broker", "version", version.Info())
 
